@@ -90,8 +90,9 @@ class Annotation:
 class Document:
     """A class to represent a full document page, including all its annotations."""
 
-    def __init__(self, data: Dict[str, Any]):
+    def __init__(self, data: Dict[str, Any], filename: str = None):
         self.raw_data = data
+        self.filename = filename
         self.layout_dets: List[Annotation] = sorted(
             [Annotation(ann) for ann in data.get("layout_dets", [])],
             key=lambda x: x.order,
@@ -112,7 +113,7 @@ class Document:
         """Load a document from a JSON file path."""
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return cls(data)
+        return cls(data, filename=os.path.basename(file_path))
 
     def get_annotation_by_id(self, anno_id: str) -> Optional[Annotation]:
         """Find an annotation by its ID."""

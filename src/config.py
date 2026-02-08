@@ -76,4 +76,5 @@ VALID_PARENT_SON_PAIRS = {
 OCR_ENABLED = True  # OCR 기능 활성화 여부
 OCR_SIMILARITY_THRESHOLD = 0.9  # 텍스트 유사도 임계값 (90%)
 OCR_CACHE_DIR = ".ocr_cache"  # OCR 결과 캐시 디렉토리
+OCR_CACHE_FILE = os.path.join(PROJECT_ROOT, OCR_CACHE_DIR, "batch_ocr_results.csv")
 TABLE_STRUCTURE_TOLERANCE = 1  # 표 행/열 개수 허용 오차

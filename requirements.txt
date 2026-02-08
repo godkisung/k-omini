@@ -1,6 +1,7 @@
 streamlit
 pillow
 streamlit-image-coordinates
+streamlit-shortcuts
 paddlepaddle
 paddleocr
 python-Levenshtein

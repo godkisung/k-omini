@@ -1,21 +1,21 @@
-"""
-Streamlit 통계 페이지 - 라벨 작업 품질 분석
-"""
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 from typing import List
 
-from qa_visualizer.core import Document
-from qa_visualizer.analytics import (
+from src import config
+from src.data_engine import Document, get_json_files, load_document
+from src.analysis_engine import (
+    calculate_category_stats,
+    extract_doc_type_from_filename,
+    DOC_TYPE_NAMES,
     detect_text_length_outliers,
     detect_bbox_size_outliers,
     get_statistics_summary,
-    calculate_bbox_area,
+    calculate_bbox_area
 )
-from qa_visualizer.rules import DOC_TYPE_NAMES, extract_doc_type_from_filename
-from app_helpers import get_json_files, load_document
+
 
 
 # 한글 폰트 설정
@@ -337,3 +337,7 @@ def _render_detailed_analysis(docs: List[Document], doc_type_filter: str):
         st.pyplot(fig)
     else:
         st.info("폴리곤 데이터가 없습니다.")
+
+
+if __name__ == "__main__":
+    statistics_page()

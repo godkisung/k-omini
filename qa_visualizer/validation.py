@@ -473,18 +473,36 @@ def run_validation(
 
 # ==================== OCR 기반 검증 ====================
 
+def calculate_bbox_from_poly(poly: List[float]) -> List[int]:
+    """
+    폴리곤 좌표에서 바운딩 박스를 계산합니다.
+    
+    Args:
+        poly: 폴리곤 좌표 리스트 [x1, y1, x2, y2, ...]
+    
+    Returns:
+        [x_min, y_min, x_max, y_max] 형태의 bbox
+    """
+    x_coords = [poly[i] for i in range(0, len(poly), 2)]
+    y_coords = [poly[i] for i in range(1, len(poly), 2)]
+    return [int(min(x_coords)), int(min(y_coords)), int(max(x_coords)), int(max(y_coords))]
+
+
 def validate_text_with_ocr(
     ann: Dict[str, Any],
     image_path: str,
-    similarity_threshold: float = 0.9
+    similarity_threshold: float = 0.9,
+    doc_data: Optional[Dict[str, Any]] = None
 ) -> List[ValidationResult]:
     """
     OCR로 추출한 텍스트와 어노테이션 텍스트를 비교하여 오타를 감지합니다.
+    하위 어노테이션(자식)이 있으면 각각 개별적으로 OCR 처리합니다.
     
     Args:
         ann: 어노테이션 데이터
         image_path: 이미지 파일 경로
         similarity_threshold: 유사도 임계값 (기본 0.9 = 90%)
+        doc_data: 전체 문서 데이터 (parent_son 관계 확인용, 선택적)
     
     Returns:
         검증 결과 리스트
@@ -497,18 +515,27 @@ def validate_text_with_ocr(
         PADDLEOCR_AVAILABLE
     )
     
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(">>> validate_text_with_ocr 호출됨")
+    
     # OCR이 비활성화된 경우 스킵
     if not PADDLEOCR_AVAILABLE:
+        logger.warning("OCR 비활성화됨 - 빈 리스트 반환")
         return []
     
     # 텍스트가 없는 어노테이션은 스킵
     ann_text = ann.get("text")
+    logger.info(f"ann_text: '{ann_text[:50] if ann_text else None}...'")
     if not ann_text or not ann_text.strip():
+        logger.warning("텍스트 없음 - 빈 리스트 반환")
         return []
     
     # 폴리곤 좌표가 없으면 스킵
     poly = ann.get("poly")
+    logger.info(f"poly 길이: {len(poly) if poly else 0}")
     if not poly or len(poly) < 6:
+        logger.warning(f"poly 좌표 부족 (len={len(poly) if poly else 0}) - 빈 리스트 반환")
         return []
     
     try:
@@ -528,12 +555,56 @@ def validate_text_with_ocr(
             ]
         
         # OCR 엔진 가져오기
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"=== OCR 검증 시작 ===")
+        logger.info(f"어노테이션 ID: {ann.get('anno_id')}, 텍스트: '{ann_text[:50]}...'")
+        logger.info(f"이미지 경로: {image_path}")
+        logger.info(f"poly: {poly}")
+        logger.info(f"계산된 bbox: {bbox}")
+        
         ocr_engine = get_ocr_engine()
         if ocr_engine is None:
+            logger.error("OCR 엔진을 가져올 수 없습니다")
             return []
         
-        # 해당 영역에서 텍스트 추출
-        ocr_text = extract_text_from_region(image_path, bbox, ocr_engine)
+        # parent_son 관계 확인하여 하위 어노테이션 개별 처리
+        child_ids = []
+        if doc_data:
+            # extra.parent_son에서 현재 어노테이션의 자식들 찾기
+            parent_son = doc_data.get("extra", {}).get("parent_son", {})
+            ann_id = ann.get("anno_id")
+            if ann_id and ann_id in parent_son:
+                child_ids = parent_son[ann_id]
+        
+        # 하위 어노테이션이 있으면 개별 처리
+        if child_ids and doc_data:
+            ocr_texts = []
+            layout_dets = {det["anno_id"]: det for det in doc_data.get("layout_dets", []) if "anno_id" in det}
+            
+            for child_id in child_ids:
+                child_ann = layout_dets.get(child_id)
+                if child_ann:
+                    child_poly = child_ann.get("poly")
+                    if child_poly and len(child_poly) >= 6:
+                        child_bbox = calculate_bbox_from_poly(child_poly)
+                        # bbox 검증
+                        if child_bbox[2] > child_bbox[0] and child_bbox[3] > child_bbox[1]:
+                            child_ocr_text = extract_text_from_region(image_path, child_bbox, ocr_engine)
+                            if child_ocr_text and child_ocr_text.strip():
+                                ocr_texts.append(child_ocr_text)
+            
+            # 모든 자식의 OCR 결과 결합
+            ocr_text = " ".join(ocr_texts)
+            bbox_info = f"분할된 {len(child_ids)}개 하위 박스 (개별 인식)"
+        else:
+            # 하위 어노테이션이 없으면 전체 bbox 사용 (기존 방식)
+            logger.info("하위 어노테이션 없음, 전체 bbox 사용")
+            bbox = calculate_bbox_from_poly(poly)
+            logger.info(f"OCR 호출 전 - bbox: {bbox}, image_path: {image_path}")
+            ocr_text = extract_text_from_region(image_path, bbox, ocr_engine)
+            logger.info(f"OCR 호출 후 - 추출된 텍스트: '{ocr_text}'")
+            bbox_info = f"bbox: {bbox}"
         
         if not ocr_text or not ocr_text.strip():
             return [
@@ -541,7 +612,7 @@ def validate_text_with_ocr(
                     rule_id="ocr_text_comparison",
                     severity=Severity.WARNING,
                     message=f"OCR로 텍스트를 추출할 수 없습니다.\n"
-                            f"bbox: {bbox}\n"
+                            f"{bbox_info}\n"
                             f"어노테이션 텍스트: '{ann_text[:100]}...'",
                 )
             ]
@@ -549,6 +620,19 @@ def validate_text_with_ocr(
         # 유사도 및 edit distance 계산
         similarity = calculate_text_similarity(ann_text, ocr_text)
         edit_distance = calculate_levenshtein_distance(ann_text, ocr_text)
+        
+        # 터미널에도 출력 (디버깅용)
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("=" * 80)
+        logger.info("🔍 OCR 검증 결과")
+        logger.info(f"유사도: {similarity:.1%}")
+        logger.info(f"Edit Distance: {edit_distance}")
+        logger.info(f"어노테이션 길이: {len(ann_text)} 문자")
+        logger.info(f"OCR 추출 길이: {len(ocr_text)} 문자")
+        logger.info(f"📝 어노테이션: '{ann_text[:100]}{'...' if len(ann_text) > 100 else ''}'")
+        logger.info(f"🤖 OCR 추출: '{ocr_text[:100]}{'...' if len(ocr_text) > 100 else ''}'")
+        logger.info("=" * 80)
         
         results = []
         
