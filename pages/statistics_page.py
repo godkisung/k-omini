@@ -138,7 +138,7 @@ def _render_basic_statistics(docs: List[Document], doc_type_filter: str):
         col1, col2 = st.columns([1, 1])
         
         with col1:
-            st.dataframe(category_df, use_container_width=True, height=400)
+            st.dataframe(category_df, width="stretch", height=400)
         
         with col2:
             fig, ax = plt.subplots(figsize=(8, 6))
@@ -210,7 +210,7 @@ def _render_outlier_analysis(docs: List[Document], doc_type_filter: str):
             text_df['category'].isin(category_filter)
         ]
         
-        st.dataframe(filtered_text_df, use_container_width=True, height=400)
+        st.dataframe(filtered_text_df, width="stretch", height=400)
         
         # 다운로드
         csv = filtered_text_df.to_csv(index=False, encoding='utf-8-sig')
@@ -264,7 +264,7 @@ def _render_outlier_analysis(docs: List[Document], doc_type_filter: str):
             bbox_df['category'].isin(category_filter)
         ]
         
-        st.dataframe(filtered_bbox_df, use_container_width=True, height=400)
+        st.dataframe(filtered_bbox_df, width="stretch", height=400)
         
         # 다운로드
         csv = filtered_bbox_df.to_csv(index=False, encoding='utf-8-sig')

@@ -33,7 +33,7 @@ def _render_search_results(query: str, results_df: pd.DataFrame):
         st.info("검색 결과가 없습니다.")
         return
     
-    st.dataframe(results_df, use_container_width=True, height=600)
+    st.dataframe(results_df, width="stretch", height=600)
     
     # CSV 다운로드 옵션
     csv = results_df.to_csv(index=False).encode('utf-8-sig')

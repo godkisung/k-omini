@@ -1,0 +1,57 @@
+<style>
+  /* 테이블 외곽선 및 내부 선 제거 */
+  .no-border-table {
+    width: 100%;
+    border-collapse: collapse; /* 셀 사이 간격 제거 */
+    border: none;
+    font-family: sans-serif;
+  }
+  
+  .no-border-table th, .no-border-table td {
+    border: none; /* 격자 숨기기 */
+    padding: 20px;
+    text-align: center;
+    vertical-align: middle;
+  }
+
+  /* 헤더 구분만 살짝 주고 싶을 때 사용 (선택 사항) */
+  .header-area {
+    border-bottom: 1px solid #eee !important;
+    font-weight: bold;
+  }
+
+  /* 차트가 들어갈 영역 스타일 */
+  .chart-box {
+    display: inline-block;
+    padding: 10px;
+    background-color: #f9f9f9; /* 차트 영역임을 알 수 있는 미세한 배경색 */
+    border-radius: 5px;
+  }
+</style>
+
+<table class="no-border-table">
+  <thead>
+    <tr>
+      <th class="header-area">사업명</th>
+      <th class="header-area">경험 여부</th>
+      <th class="header-area">만족도</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>RIS</b></td>
+      
+      <td>
+        <div class="chart-box">
+          <chart><img src="anno_id_101"></chart>
+        </div>
+      </td>
+      
+      <td>
+        <div class="chart-box">
+          <chart><img src="anno_id_102"></chart>
+        </div>
+      </td>
+    </tr>
+  </tbody>
+</table>

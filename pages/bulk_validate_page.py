@@ -12,6 +12,13 @@ def bulk_validate_page():
     """일괄 검증 페이지 메인 함수"""
     st.header("🔬 일괄 검증 리포트")
     
+    # 상단 컨트롤 패널
+    col1, col2 = st.columns([0.8, 0.2])
+    with col2:
+        if st.button("🔄 재검증 (캐시 초기화)", type="primary", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+
     # 검증 실행
     report_df = perform_bulk_validation()
     
@@ -32,7 +39,7 @@ def bulk_validate_page():
     filtered_df = _render_advanced_filters(report_df)
     
     # 데이터 테이블
-    st.dataframe(filtered_df, use_container_width=True, height=600)
+    st.dataframe(filtered_df, width="stretch", height=600)
     
     # 다운로드 버튼 (CSV + Excel)
     _render_download_buttons(filtered_df)
@@ -83,7 +90,7 @@ def _render_category_statistics(report_df: pd.DataFrame):
             "파일": file_counts.index,
             "이슈 개수": file_counts.values
         })
-        st.dataframe(file_df, use_container_width=True, height=300)
+        st.dataframe(file_df, width="stretch", height=300)
     else:
         st.info("문제가 있는 파일이 없습니다.")
 

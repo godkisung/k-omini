@@ -44,7 +44,7 @@ def main():
         st.json({
             "Data Directory": config.DATA_DIR,
             "Image Directory": config.IMAGE_DIR,
-            "OCR Enabled": config.OCR_ENABLED,
+            "OCR Enabled": config.get_config().OCR_ENABLED,
             "Cache Status": "Active" if os.path.exists(config.OCR_CACHE_FILE) else "Empty"
         })
 
