@@ -1,7 +1,6 @@
-# QA Visualizer - K-Omnidoc Benchmark 검수 도구 (v2.0)
+# QA Visualizer - K-Omnidoc Benchmark 검수 도구
 
 K-Omnidoc Benchmark 데이터셋의 품질 검증 및 시각화를 위한 Streamlit 기반 검수 도구입니다.
-v2.0 업데이트를 통해 **모듈화된 아키텍처(`src/`)**와 **하이브리드 OCR 엔진**을 도입하여 성능과 안정성을 대폭 개선했습니다.
 
 ## 📋 주요 기능
 
@@ -11,10 +10,8 @@ v2.0 업데이트를 통해 **모듈화된 아키텍처(`src/`)**와 **하이브
 - 📝 **콘텐츠 렌더링**: 텍스트, LaTeX 수식, HTML 표/차트 미리보기
 - ✅ **실시간 검증**: 필수 키, 좌표 유효성, 부모-자식 관계 등 자동 검증
 
-### 2. **지능형 OCR 검증 (Hybrid OCR)**
-- 🚀 **EasyOCR + DOTS**: 속도와 정확도를 모두 잡은 하이브리드 엔진
+### 2. **OCR 검증 (OCR)**
   - **EasyOCR**: 빠른 초벌 인식 (CPU/GPU)
-  - **DOTS v2**: 고밀도 문서 특화 정밀 인식 (GPU 권장)
 - 📊 **유사도 분석**: GT 텍스트와 OCR 결과의 유사도(Levenshtein) 자동 계산
 - 🚦 **자동 판정**: 유사도에 따라 색상 코딩 (🟢통과 / 🟡주의 / 🔴오류)
 
@@ -32,16 +29,12 @@ v2.0 업데이트를 통해 **모듈화된 아키텍처(`src/`)**와 **하이브
 
 ### 필수 요구사항
 - Python 3.8 ~ 3.11
-- CUDA 지원 GPU 권장 (DOTS 모델 구동 시)
+- CUDA 지원 GPU 권장
 
 ### 설치
 ```bash
 # 1. 의존성 설치
 pip install -r requirements.txt
-
-# 2. (선택) DOTS 모델 weight 다운로드
-# (자동으로 HuggingFace에서 다운로드되지만, huggingface-cli로 미리 받을 수 있음)
-```
 
 ---
 
@@ -92,15 +85,3 @@ streamlit run streamlit_app_v2.py
 *   `OCR_SIMILARITY_THRESHOLD`: 검증 통과 기준 유사도 (기본 0.9)
 
 ---
-
-## 📝 개발 노트
-
-### v2.0 주요 변경사항 (2026-02-09)
-*   ✨ **아키텍처 리팩토링**: `src/` 패키지 도입으로 유지보수성 향상
-*   ✨ **Hybrid OCR**: PaddleOCR 제거 → EasyOCR + DOTS 통합
-*   ✨ **데이터 모델 개선**: `Annotation` dataclass 강화 (`order` 필드 등 추가)
-*   🐛 **버그 수정**: Streamlit 캐시 문제 및 렌더링 오류 수정
-
-### 기여 방법
-이 프로젝트는 K-Omnidoc Benchmark의 일부입니다. 이슈 등록 및 PR 환영합니다.
-
