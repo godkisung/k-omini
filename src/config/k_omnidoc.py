@@ -43,7 +43,7 @@ class KOmniDocConfig(BaseConfig):
             "figure": common + ["attribute.contains_elements", "sub_regions"],
             "chart": common + [
                 "html", "attribute.chart_type", "attribute.language", 
-                "attribute.chart_level", "attribute.is_indexed"
+                "attribute.is_indexed"
             ],
             "mask_group": common,
         }

@@ -104,10 +104,65 @@ def inspect_page():
         
         st.divider() # Visual separation
         
+        # [신규] 문서 레벨 관계 속성 검증 및 크롭 확인 UI
+        _render_document_validation(doc)
+        
         if filtered_anns:
             _render_inspection_panel(doc, filtered_anns, filtered_indices, current_filtered_idx)
         else:
             st.info("선택된 어노테이션이 없습니다.")
+
+def _render_document_validation(doc):
+    doc_val_results = validator.validate_document(doc)
+    if not doc_val_results:
+        return
+        
+    st.error(f"🚨 문서 레벨 검증 오류 {len(doc_val_results)}건 발견!")
+    with st.expander("🔍 오류 상세 보기 및 이미지 크롭 확인", expanded=True):
+        for i, res in enumerate(doc_val_results):
+            st.markdown(f"**[{i+1}] {res.message}**")
+            if res.rule_id == "missing_figure_dependency":
+                parent_id = res.details["parent_id"]
+                child_id = res.details["child_id"]
+                
+                # 원본 이미지 로드버튼 고유 키 생성
+                if st.button(f"🖼️ 위반 영역(Figure) 크롭 보기", key=f"crop_btn_{parent_id}_{child_id}_{i}"):
+                    _show_cropped_error(doc, parent_id, child_id)
+            st.markdown("---")
+
+def _show_cropped_error(doc, parent_id, child_id):
+    # parent, child 객체 찾기
+    parent_ann = next((a for a in doc.layout_dets if a.anno_id == parent_id), None)
+    child_ann = next((a for a in doc.layout_dets if a.anno_id == child_id), None)
+    
+    if not parent_ann or not child_ann:
+        return
+        
+    full_image_path = os.path.join(IMAGE_DIR, doc.image_path)
+    if os.path.exists(full_image_path):
+        from src.core.visualizer import draw_annotations_on_image
+        image = Image.open(full_image_path).convert("RGB")
+        
+        # 부모 객체 영역(bbox) 구하기 (margin 추가)
+        p_poly = parent_ann.poly
+        min_x = max(0, min(p_poly[0::2]) - 50)
+        min_y = max(0, min(p_poly[1::2]) - 50)
+        max_x = min(image.width, max(p_poly[0::2]) + 50)
+        max_y = min(image.height, max(p_poly[1::2]) + 50)
+        
+        # 시각화용 이미지 생성 (원본 모듈 활용하여 두 객체만 그리기)
+        annotated_image = draw_annotations_on_image(
+            image.copy(), 
+            [parent_ann, child_ann], 
+            config,
+            highlight_indices=[0, 1] # 방금 추출한 배열의 0, 1 인덱스 모두 강제 하이라이트로 구분
+        )
+        
+        # Crop 처리
+        cropped_image = annotated_image.crop((min_x, min_y, max_x, max_y))
+        st.image(cropped_image, caption=f"결함 영역 크롭 (Figure ID: {parent_id}, 누락 요소 ID: {child_id})", use_column_width=True)
+    else:
+        st.error("이미지 파일을 찾을 수 없습니다.")
 
 # --- 3. 파일 탐색 (인덱스 오류 방어 코드 추가) ---
 def _render_file_navigation_tab():

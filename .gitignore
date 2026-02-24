@@ -63,6 +63,7 @@ visualizations/
 validation_report.csv
 validation_report.xlsx
 *.pdf
+scripts/    
 
 # OCR 캐시
 .ocr_cache/
@@ -79,7 +80,6 @@ validation_report.xlsx
 .gitlab-ci.yml
 
 # 제외하지 않을 파일들 (검수 프로그램 관련)
-!qa_visualizer/
 !pages/
 !tests/
 !streamlit_app.py
