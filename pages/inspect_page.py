@@ -21,6 +21,25 @@ from src.analysis.validator import Validator, Severity
 # from src.analysis.outlier_detector import OutlierDetector # Not used in this file yet but available
 from src.core.ocr_engine import extract_text_from_region
 
+# [샘플링 검수 모드] 캐시 매니저
+try:
+    from src.sampling.cache_manager import SamplingCache
+    from src.sampling.exporter import ReviewExporter
+    SAMPLING_AVAILABLE = True
+except ImportError:
+    SAMPLING_AVAILABLE = False
+
+# 오류 유형 목록
+_SAMPLING_ERROR_TYPES = [
+    "카테고리 분류 오류",
+    "바운딩 박스 오류",
+    "텍스트 누락/오기",
+    "관계(relation) 오류",
+    "ignore 플래그 오류",
+    "순서(order) 오류",
+    "기타",
+]
+
 # Config Injection
 config = get_config()
 validator = Validator(config)
@@ -37,6 +56,8 @@ def _initialize_session_state():
         st.session_state.current_file = None
     if "show_only_errors" not in st.session_state:
         st.session_state.show_only_errors = False
+    if "sampling_mode" not in st.session_state:
+        st.session_state.sampling_mode = False
 
 @st.cache_data
 def get_cached_files():
@@ -112,6 +133,13 @@ def inspect_page():
         else:
             st.info("선택된 어노테이션이 없습니다.")
 
+        # ── 샘플링 검수 기록 패널 ────────────────────────────────
+        if st.session_state.get("sampling_mode", False):
+            sampling_cache = _get_active_sampling_cache()
+            if sampling_cache is not None:
+                st.divider()
+                _render_sampling_review_panel(sampling_cache, selected_file)
+
 def _render_document_validation(doc):
     doc_val_results = validator.validate_document(doc)
     if not doc_val_results:
@@ -167,12 +195,52 @@ def _show_cropped_error(doc, parent_id, child_id):
 # --- 3. 파일 탐색 (인덱스 오류 방어 코드 추가) ---
 def _render_file_navigation_tab():
     st.markdown("### 📁 파일 탐색")
-    json_files = get_cached_files()
-    
+
+    # ── 샘플링 검수 모드 전환 ──────────────────────────────────
+    sampling_cache = _get_active_sampling_cache()
+    if SAMPLING_AVAILABLE and sampling_cache is not None:
+        sampling_mode = st.toggle(
+            "🎲 샘플링 검수 모드",
+            value=st.session_state.sampling_mode,
+            key="toggle_sampling_mode",
+            help=f"캐시: {sampling_cache.batch_name} ({sampling_cache.date})",
+        )
+        if sampling_mode != st.session_state.sampling_mode:
+            st.session_state.sampling_mode = sampling_mode
+            st.session_state.file_index = 0
+            st.rerun()
+    else:
+        st.session_state.sampling_mode = False
+        sampling_mode = False
+
+    # ── 파일 목록 결정 ──────────────────────────────────────────
+    if st.session_state.sampling_mode and sampling_cache is not None:
+        # 샘플링 모드: 캐시의 샘플 파일 목록 사용 (절대경로로 변환)
+        batch_json_dir = os.path.join(
+            os.path.dirname(DATA_DIR),  # data/ 루트
+            sampling_cache._data.get("batch", ""),
+            "json",
+        )
+        # data_dir 구조를 정확히 맞추기 위해 config에서 가져오기
+        from src.config import get_batch_dirs
+        batch_json_dir, _ = get_batch_dirs(sampling_cache.batch_name)
+        raw_sampled = sampling_cache.sampled_files
+        json_files = [os.path.join(batch_json_dir, f) for f in raw_sampled]
+
+        # 진행 현황 배지 표시
+        reviewed, total = sampling_cache.progress()
+        st.progress(
+            reviewed / total if total > 0 else 0.0,
+            text=f"검수 진행: {reviewed} / {total}",
+        )
+        st.caption(f"📦 {sampling_cache.batch_name} | 📅 {sampling_cache.date}")
+    else:
+        json_files = get_cached_files()
+
     search_query = st.text_input("🔍 파일 검색", value=st.session_state.last_search_query, key="f_search")
     st.session_state.last_search_query = search_query
 
-    filtered_files = [f for f in json_files if search_query.lower() in f.lower()] if search_query else json_files
+    filtered_files = [f for f in json_files if search_query.lower() in os.path.basename(f).lower()] if search_query else json_files
     
     if not filtered_files:
         st.warning("검색 결과가 없습니다.")
@@ -506,6 +574,149 @@ def _run_ad_hoc_ocr(selected_ann, doc):
         else: st.success(f"Pass (Sim: {sim:.2f})")
         
         st.text_area("Extracted", value=ocr_text)
+
+
+# ─── 샘플링 검수 모드 헬퍼 ──────────────────────────────────────────────────────
+
+def _get_active_sampling_cache():
+    """session_state에서 활성 샘플링 캐시를 반환합니다.
+
+    Returns:
+        로드된 SamplingCache, 없으면 None.
+    """
+    if not SAMPLING_AVAILABLE:
+        return None
+    batch = st.session_state.get("active_batch")
+    date = st.session_state.get("active_date")
+    if not batch or not date:
+        return None
+    try:
+        cache = SamplingCache(batch_name=batch, date=date)
+        if cache.exists():
+            cache.load()
+            return cache
+    except Exception:
+        pass
+    return None
+
+
+def _render_sampling_review_panel(cache, selected_file: str) -> None:
+    """🎲 샘플링 검수 기록 패널을 렌더링합니다.
+
+    inspect_page의 '검수' 탭 하단에 배치되어, 현재 파일에 대한
+    오류 여부·유형·메모를 기록하고 즉시 캐시에 저장합니다.
+
+    Args:
+        cache: 활성 SamplingCache 인스턴스.
+        selected_file: 현재 보고 있는 JSON 파일의 절대 경로.
+    """
+    fname = os.path.basename(selected_file)
+
+    # 샘플 목록에 없는 파일이면 패널 미표시
+    if fname not in cache.sampled_files:
+        st.info("📋 이 파일은 현재 샘플 목록에 없습니다.")
+        return
+
+    st.markdown("### 🎲 샘플링 검수 기록")
+
+    existing = cache.get_result(fname)
+    reviewed = existing.get("reviewed", False)
+
+    # 완료 상태 뱃지
+    if reviewed:
+        badge = "✅ 검수 완료" if not existing.get("is_error") else "🔴 오류 기록됨"
+        if not existing.get("is_error"):
+            st.success(badge)
+        else:
+            st.error(badge)
+    else:
+        st.warning("⬜ 아직 검수하지 않은 항목입니다.")
+
+    # 오류 여부 토글
+    is_error = st.toggle(
+        "⚠️ 오류 있음",
+        value=existing.get("is_error", False),
+        key=f"sp_err_{fname}",
+    )
+
+    # 오류 유형 (오류 있을 때만 표시)
+    error_types: list[str] = []
+    if is_error:
+        error_types = st.multiselect(
+            "오류 유형 (복수 선택 가능)",
+            options=_SAMPLING_ERROR_TYPES,
+            default=[t for t in existing.get("error_types", []) if t in _SAMPLING_ERROR_TYPES],
+            key=f"sp_etypes_{fname}",
+        )
+
+    # 메모
+    memo = st.text_area(
+        "검수자 메모",
+        value=existing.get("memo", ""),
+        height=100,
+        placeholder="특이사항, 재확인 필요 항목 등",
+        key=f"sp_memo_{fname}",
+    )
+
+    # 저장 버튼
+    col_save, col_next = st.columns(2)
+    with col_save:
+        if st.button("💾 저장", use_container_width=True, key=f"sp_save_{fname}"):
+            cache.update_result(
+                filename=fname,
+                is_error=is_error,
+                error_types=error_types,
+                memo=memo,
+            )
+            st.toast("✅ 저장됨")
+            st.rerun()
+
+    with col_next:
+        # 다음 미검수 파일로 이동
+        if st.button("⏭️ 저장 후 다음", type="primary", use_container_width=True, key=f"sp_next_{fname}"):
+            cache.update_result(
+                filename=fname,
+                is_error=is_error,
+                error_types=error_types,
+                memo=memo,
+            )
+            # file_index를 다음 미검수 파일로 이동
+            files = cache.sampled_files
+            from src.config import get_batch_dirs
+            batch_json_dir, _ = get_batch_dirs(cache.batch_name)
+            current_abs_files = [os.path.join(batch_json_dir, f) for f in files]
+
+            current_idx = st.session_state.get("file_index", 0)
+            for i in range(current_idx + 1, len(files)):
+                r = cache.review_results.get(files[i], {})
+                if not r.get("reviewed", False):
+                    st.session_state.file_index = i
+                    st.session_state.current_file = None  # 파일 변경 감지 초기화
+                    st.toast("✅ 저장됨 → 다음 미검수 항목으로 이동")
+                    st.rerun()
+                    return
+            st.toast("✅ 저장됨. 미검수 항목이 없습니다!")
+            st.rerun()
+
+    # Excel 다운로드 버튼
+    st.markdown("---")
+    reviewed_count, total_count = cache.progress()
+    st.caption(f"전체 진행: {reviewed_count} / {total_count}")
+
+    try:
+        exporter = ReviewExporter(cache)
+        excel_bytes = exporter.to_bytes()
+        st.download_button(
+            label="📥 Excel 다운로드",
+            data=excel_bytes,
+            file_name=f"검수결과_{cache.batch_name}_{cache.date}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"sp_excel_{fname}",
+        )
+    except Exception as e:
+        st.warning(f"Excel 생성 오류: {e}")
+
 
 if __name__ == "__main__":
     inspect_page()

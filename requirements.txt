@@ -2,8 +2,6 @@ streamlit
 pillow
 streamlit-image-coordinates
 streamlit-shortcuts
-paddlepaddle
-paddleocr
 python-Levenshtein
 beautifulsoup4
 lxml

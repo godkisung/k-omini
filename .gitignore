@@ -90,3 +90,13 @@ scripts/
 !README.md
 !pytest.ini
 !GEMINI.md
+
+# Sampling / Review Cache
+.sampling_cache/
+
+# EasyOCR Fine-tuning
+easyocr_trainer/trainer/saved_models/
+easyocr_trainer/trainer/all_data/
+easyocr_trainer/trainer/log_*.txt
+*.pth
+*.pt
