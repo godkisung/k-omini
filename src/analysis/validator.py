@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from enum import Enum, auto
+import re
 from src.core.models import Annotation, Document
 from src.config.base import BaseConfig
 import numpy as np
@@ -67,6 +68,14 @@ class Validator:
         elif len(poly) % 2 != 0:
              results.append(ValidationResult("invalid_poly", Severity.ERROR, "Polygon coordinates must be even number"))
 
+        # 3. 빈 텍스트(Empty Text) 유효성 검사
+        text_required_cats = {"text_block", "title", "header", "footer", "list_item", "table_caption", "figure_caption", "page_footnote"}
+        if category in text_required_cats:
+            if ann.text is not None and str(ann.text).strip() == "":
+                # ignore=True인 경우 상대적으로 덜 중요하므로 WARNING, 아닌 경우는 ERROR
+                severity = Severity.WARNING if getattr(ann, 'ignore', False) else Severity.ERROR
+                results.append(ValidationResult("empty_text", severity, "텍스트(text) 값이 비어있습니다."))
+
         return results
 
     def validate_document(self, doc: Document) -> List[ValidationResult]:
@@ -76,7 +85,28 @@ class Validator:
         """
         results = []
         
-        # 1. 모든 Figure 추출
+        # 1. 자기 참조(Self-referencing) 관계 오류 검사
+        if doc.raw_data and 'extra' in doc.raw_data and 'relation' in doc.raw_data['extra']:
+            for rel in doc.raw_data['extra']['relation']:
+                parent = rel.get('parent') if 'parent' in rel else rel.get('source_anno_id')
+                son = rel.get('son') if 'son' in rel else rel.get('target_anno_id')
+                if parent is not None and son is not None and parent == son:
+                    results.append(
+                        ValidationResult(
+                            rule_id="self_referencing_relation",
+                            severity=Severity.ERROR,
+                            message=f"자기 자신을 참조하는 비정상적인 관계가 발견되었습니다. (ID: {parent})",
+                            details={"anno_id": parent}
+                        )
+                    )
+
+        # 2. Table: attribute.include_* 속성 ↔ extra.relation 일관성 검증
+        results.extend(self._validate_table_include_relations(doc))
+
+        # 3. Table: HTML 내 anno_id 참조 유효성 검증
+        results.extend(self._validate_table_html_anno_refs(doc))
+        
+        # 4. 모든 Figure 추출
         figures = [ann for ann in doc.layout_dets if ann.category_type == 'figure']
         if not figures:
             return results
@@ -108,9 +138,9 @@ class Validator:
                 if not child.poly or len(child.poly) < 6 or not figure.poly or len(figure.poly) < 6:
                     continue
                     
-                # 3. 교차 면적 비율(IoA) 계산 (Figure에 약간의 여유 버퍼 허용)
-                # 약간 겹치는건 무시하지만, 자식 박스가 부모 박스에 90% 이상 포함되어 있다면 누락으로 간주
-                ioa = self._calculate_ioa(figure.poly, child.poly, parent_buffer=20.0)
+                # 3. 교차 면적 비율(IoA) 계산 (오탐 방지를 위해 buffer는 0.0으로 엄격하게 적용)
+                # 자식 박스가 부모 박스에 90% 이상 겹칠 경우만 누락으로 간주
+                ioa = self._calculate_ioa(figure.poly, child.poly, parent_buffer=0.0)
                 
                 # 4. IoA가 0.90(90%) 이상인데 종속되어 있지 않으면 에러
                 if ioa >= 0.90:
@@ -128,6 +158,119 @@ class Validator:
                         )
                     )
                     
+        return results
+
+    def _validate_table_include_relations(self, doc: Document) -> List[ValidationResult]:
+        """Table 어노테이션의 attribute.include_* 값과 extra.relation의 일관성을 검증합니다.
+        
+        include_photo=true → extra.relation에 figure를 target으로 하는 parent_son 관계 필요.
+        include_chart=true → chart target 관계 필요.
+        include_table=true → table target 관계 필요.
+        역도 마찬가지로 relation이 있는데 attribute가 false이면 ERROR.
+        """
+        results = []
+        
+        # extra.relation 편의 접근 (source_anno_id → target 카테고리 mapping)
+        anno_by_id: Dict[Any, str] = {ann.anno_id: ann.category_type for ann in doc.layout_dets}
+        relations = []
+        if doc.raw_data and 'extra' in doc.raw_data:
+            for rel in doc.raw_data['extra'].get('relation', []):
+                src = rel.get('source_anno_id') if 'source_anno_id' in rel else rel.get('parent')
+                tgt = rel.get('target_anno_id') if 'target_anno_id' in rel else rel.get('son')
+                if src is not None and tgt is not None:
+                    relations.append((src, tgt, rel.get('relation_type', '')))
+        
+        # attribute → 기대 target 카테고리 매핑
+        ATTR_TO_CAT = {
+            'include_photo': 'figure',
+            'include_chart': 'chart',
+            'include_table': 'table',
+        }
+        
+        tables = [ann for ann in doc.layout_dets if ann.category_type == 'table']
+        for tbl in tables:
+            attr = {}
+            if tbl.raw_data:
+                attr = tbl.raw_data.get('attribute', {})
+            elif tbl.attributes:
+                attr = tbl.attributes
+            
+            # 테이블이 parent인 parent_son 관계에서 실제 target 카테고리 목록
+            actual_child_cats: Set[str] = set()
+            for src, tgt, rel_type in relations:
+                if src == tbl.anno_id and 'parent_son' in rel_type:
+                    tgt_cat = anno_by_id.get(tgt)
+                    if tgt_cat:
+                        actual_child_cats.add(tgt_cat)
+            
+            for attr_key, expected_cat in ATTR_TO_CAT.items():
+                is_flagged: bool = bool(attr.get(attr_key, False))
+                has_relation: bool = expected_cat in actual_child_cats
+                
+                if is_flagged and not has_relation:
+                    results.append(ValidationResult(
+                        rule_id="table_include_attr_relation_mismatch",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"Table(ID:{tbl.anno_id}) attribute.{attr_key}=true이지만 "
+                            f"'{expected_cat}'를 target으로 하는 parent_son 관계가 없습니다."
+                        ),
+                        details={"anno_id": tbl.anno_id, "attr_key": attr_key, "expected_cat": expected_cat}
+                    ))
+                elif not is_flagged and has_relation:
+                    results.append(ValidationResult(
+                        rule_id="table_include_attr_relation_mismatch",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"Table(ID:{tbl.anno_id}) '{expected_cat}'를 target으로 하는 "
+                            f"parent_son 관계가 있지만 attribute.{attr_key}=false입니다."
+                        ),
+                        details={"anno_id": tbl.anno_id, "attr_key": attr_key, "expected_cat": expected_cat}
+                    ))
+        
+        return results
+
+    def _validate_table_html_anno_refs(self, doc: Document) -> List[ValidationResult]:
+        """Table HTML 내 anno_id 참조($$figure_N$$ 또는 <img src='anno_id_N'>) 유효성을 검증합니다.
+        
+        참조된 ID가 해당 문서의 layout_dets에 실제 존재하지 않으면 ERROR.
+        """
+        results = []
+        valid_ids: Set[Any] = {ann.anno_id for ann in doc.layout_dets}
+        
+        # 참조 패턴: $$figure_01$$ 또는 <img src="anno_id_5">
+        # $$..._{digits}$$ → 숫자 부분이 anno_id
+        pattern_dollar = re.compile(r'\$\$[^$]*_(\d+)\$\$')
+        # anno_id_N (숫자) 패턴
+        pattern_img = re.compile(r'anno_id[_]?(\d+)', re.IGNORECASE)
+        
+        tables = [ann for ann in doc.layout_dets if ann.category_type == 'table']
+        for tbl in tables:
+            html = ''
+            if tbl.raw_data:
+                html = str(tbl.raw_data.get('html', ''))
+            
+            if not html:
+                continue
+            
+            # 두 패턴으로 참조 ID 추출
+            ref_ids: Set[int] = set()
+            for m in pattern_dollar.finditer(html):
+                ref_ids.add(int(m.group(1)))
+            for m in pattern_img.finditer(html):
+                ref_ids.add(int(m.group(1)))
+            
+            for ref_id in ref_ids:
+                if ref_id not in valid_ids:
+                    results.append(ValidationResult(
+                        rule_id="table_html_invalid_anno_ref",
+                        severity=Severity.ERROR,
+                        message=(
+                            f"Table(ID:{tbl.anno_id}) HTML이 존재하지 않는 anno_id={ref_id}를 참조하고 있습니다."
+                        ),
+                        details={"anno_id": tbl.anno_id, "ref_id": ref_id}
+                    ))
+        
         return results
 
     def _calculate_ioa(self, parent_poly_coords: List[float], child_poly_coords: List[float], parent_buffer: float = 0.0) -> float:

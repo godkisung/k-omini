@@ -16,8 +16,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 DATA_ROOT = os.path.join(PROJECT_ROOT, "data")
 
 # 기본값 (하위 호환성 유지)
-DATA_DIR = os.path.join(PROJECT_ROOT, "data", "Alchera_delivery_P1_260227", "json")
-IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "Alchera_delivery_P1_260227", "img")
+DATA_DIR = os.path.join(PROJECT_ROOT, "data", "Alchera_delivery_P2_260306", "json")
+IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "Alchera_delivery_P2_260306", "img")
 OCR_CACHE_DIR = ".ocr_cache"
 OCR_CACHE_FILE = os.path.join(PROJECT_ROOT, OCR_CACHE_DIR, "batch_ocr_results.csv")
 

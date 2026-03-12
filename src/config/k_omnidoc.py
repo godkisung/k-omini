@@ -61,6 +61,20 @@ class KOmniDocConfig(BaseConfig):
     def UNORDERED_CATEGORIES(self) -> List[str]:
         return ["header", "page_number", "abandon", "footer", "page_footnote", "need_mask"]
 
+    @property
+    def TEXT_CATEGORIES(self) -> List[str]:
+        return [
+            "title", "text_block", "list", "header", "footer", 
+            "figure_caption", "table_caption", "page_number"
+        ]
+
+    @property
+    def TEXT_CATEGORIES(self) -> List[str]:
+        return [
+            "title", "text_block", "list", "header", "footer", 
+            "figure_caption", "table_caption", "page_number"
+        ]
+
     # --- 이상치 탐지 규칙 (Text Length) ---
     @property
     def TEXT_LENGTH_RULES(self) -> Dict[str, Dict[str, Tuple[int, int, str]]]:

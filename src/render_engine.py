@@ -13,7 +13,7 @@ def draw_annotations_on_image(
     highlight_indices: List[int] = None,
     color_map: Dict[str, str] = None, # Deprecated argument
     default_color: str = "#000000", # Deprecated argument
-    width: int = 3
+    width: int = 10
 ) -> Image.Image:
     """
     Wrapper for src.core.visualizer.draw_annotations_on_image

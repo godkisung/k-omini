@@ -149,14 +149,27 @@ def _render_document_validation(doc):
     with st.expander("🔍 오류 상세 보기 및 이미지 크롭 확인", expanded=True):
         for i, res in enumerate(doc_val_results):
             st.markdown(f"**[{i+1}] {res.message}**")
+            details = res.details or {}
             if res.rule_id == "missing_figure_dependency":
-                parent_id = res.details["parent_id"]
-                child_id = res.details["child_id"]
-                
-                # 원본 이미지 로드버튼 고유 키 생성
+                parent_id = details["parent_id"]
+                child_id = details["child_id"]
                 if st.button(f"🖼️ 위반 영역(Figure) 크롭 보기", key=f"crop_btn_{parent_id}_{child_id}_{i}"):
                     _show_cropped_error(doc, parent_id, child_id)
+            elif res.rule_id == "table_include_attr_relation_mismatch":
+                # Table 단독 크롭 (child가 없으므로 table 자신만 표시)
+                tbl_id = details.get("anno_id")
+                if tbl_id is not None and st.button(
+                    f"🖼️ 위반 테이블 영역 크롭 보기", key=f"crop_tbl_{tbl_id}_{i}"
+                ):
+                    _show_single_ann_crop(doc, tbl_id)
+            elif res.rule_id == "table_html_invalid_anno_ref":
+                tbl_id = details.get("anno_id")
+                if tbl_id is not None and st.button(
+                    f"🖼️ HTML 참조 오류 테이블 크롭 보기", key=f"crop_htmlref_{tbl_id}_{i}"
+                ):
+                    _show_single_ann_crop(doc, tbl_id)
             st.markdown("---")
+
 
 def _show_cropped_error(doc, parent_id, child_id):
     # parent, child 객체 찾기
@@ -191,6 +204,38 @@ def _show_cropped_error(doc, parent_id, child_id):
         st.image(cropped_image, caption=f"결함 영역 크롭 (Figure ID: {parent_id}, 누락 요소 ID: {child_id})", use_column_width=True)
     else:
         st.error("이미지 파일을 찾을 수 없습니다.")
+
+def _show_single_ann_crop(doc, anno_id, margin: int = 60):
+    """단일 어노테이션 영역만 크롭하여 표시합니다 (Table 오류 시각화 등에 사용)."""
+    ann = next((a for a in doc.layout_dets if a.anno_id == anno_id), None)
+    if not ann or not ann.poly:
+        st.warning(f"anno_id={anno_id} 에 해당하는 어노테이션을 찾을 수 없습니다.")
+        return
+
+    full_image_path = os.path.join(IMAGE_DIR, doc.image_path)
+    if not os.path.exists(full_image_path):
+        st.error("이미지 파일을 찾을 수 없습니다.")
+        return
+
+    from src.core.visualizer import draw_annotations_on_image
+    image = Image.open(full_image_path).convert("RGB")
+
+    poly = ann.poly
+    min_x = max(0, min(poly[0::2]) - margin)
+    min_y = max(0, min(poly[1::2]) - margin)
+    max_x = min(image.width, max(poly[0::2]) + margin)
+    max_y = min(image.height, max(poly[1::2]) + margin)
+
+    annotated_image = draw_annotations_on_image(
+        image.copy(),
+        [ann],
+        config,
+        highlight_indices=[0]
+    )
+    cropped = annotated_image.crop((min_x, min_y, max_x, max_y))
+    st.image(cropped, caption=f"Table 영역 크롭 (anno_id: {anno_id})", use_column_width=True)
+
+
 
 # --- 3. 파일 탐색 (인덱스 오류 방어 코드 추가) ---
 def _render_file_navigation_tab():
@@ -419,26 +464,37 @@ def _render_main_visual_ui(doc, filtered_anns, filtered_indices, current_filtere
             selected_anno_id=selected_ann.anno_id
         )
         
-        # Streamlit Image Coordinates
-        coords = streamlit_image_coordinates(annotated_image, key="img_m", use_column_width=True)
+        # 줌 뷰어 기능 시작 (상단 노출)
+        use_zoom = st.toggle("🔍 줌 가능한 이미지 뷰어 사용 (Plotly SVG Overlay)", value=False, key="inspect_zoom_toggle")
         
-        # Interaction Logic
-        if coords:
-            # Need 'is_inside' logic for Annotation or Generic Poly check
-            # Let's implement simple poly check here or assume it was in Document
-            # Document from src.data_engine had it? Let's assume No and implement/restore it.
-            # Current `Annotation` dataclass is simple. We need helper.
-            # Or use shapely? Let's use simple logic for now.
-            x, y = coords["x"], coords["y"]
+        if use_zoom:
+            from src.core.visualizer import create_plotly_figure
+            fig = create_plotly_figure(
+                image, 
+                doc.layout_dets, 
+                config,
+                highlight_indices=[st.session_state.selected_index],
+                relations=relations,
+                show_all_relations=st.session_state.get("show_all_relations", False),
+                selected_anno_id=selected_ann.anno_id
+            )
+            st.plotly_chart(fig, use_container_width=True, key="inspect_plotly")
+        else:
+            # Streamlit Image Coordinates (기존 인터랙션 기능 유지)
+            coords = streamlit_image_coordinates(annotated_image, key="img_m", use_column_width=True)
             
-            # Find clicked annotation
-            # Iterate reversed to find top-most
-            for i, ann in reversed(list(enumerate(doc.layout_dets))):
-                if _is_point_in_poly(x, y, ann.poly):
-                    if st.session_state.selected_index != i:
-                        st.session_state.selected_index = i
-                        st.rerun()
-                    break
+            # Interaction Logic
+            if coords:
+                x, y = coords["x"], coords["y"]
+                
+                # Find clicked annotation
+                # Iterate reversed to find top-most
+                for i, ann in reversed(list(enumerate(doc.layout_dets))):
+                    if _is_point_in_poly(x, y, ann.poly):
+                        if st.session_state.selected_index != i:
+                            st.session_state.selected_index = i
+                            st.rerun()
+                        break
     else:
         st.error(f"이미지 파일을 찾을 수 없습니다: {full_image_path}")
 
@@ -464,10 +520,19 @@ def _is_point_in_poly(x, y, poly):
 def _render_validation_tab(selected_ann, doc):
     # Use injected validator
     val_results = validator.validate_annotation(selected_ann)
+    
+    # 문서 레벨 에러 중, 현재 선택된 Annotation과 연관된 에러 가져오기
+    doc_val_results = validator.validate_document(doc)
+    for res in doc_val_results:
+        details = res.details or {}
+        if selected_ann.anno_id in (details.get("anno_id"), details.get("parent_id"), details.get("child_id")):
+            val_results.append(res)
+            
     if not val_results: st.success("이슈 없음")
     for res in val_results:
-        if res.severity == Severity.ERROR: st.error(res.message)
-        else: st.warning(res.message)
+        if getattr(res, "severity", None) == Severity.ERROR: st.error(res.message)
+        elif getattr(res, "severity", None) == Severity.WARNING: st.warning(res.message)
+        else: st.info(res.message if hasattr(res, "message") else str(res))
 
 def _render_filter_tab(doc):
     categories = sorted(list(set([ann.category_type for ann in doc.layout_dets])))
@@ -485,11 +550,23 @@ def _render_filter_tab(doc):
 
 def _filter_annotations(doc, category_filter, show_only_errors):
     filtered_anns, filtered_indices = [], []
+    
+    # 필터 적용 시, 문서 레벨 오류에 연루된 anno_id 목록 미리 수집
+    doc_error_anno_ids = set()
+    if show_only_errors:
+        for res in validator.validate_document(doc):
+            details = res.details or {}
+            if "anno_id" in details: doc_error_anno_ids.add(details["anno_id"])
+            if "parent_id" in details: doc_error_anno_ids.add(details["parent_id"])
+            if "child_id" in details: doc_error_anno_ids.add(details["child_id"])
+            
     for i, ann in enumerate(doc.layout_dets):
         if category_filter != "전체" and ann.category_type != category_filter: continue
         if show_only_errors:
             val_results = validator.validate_annotation(ann) # Use validator
-            if not any(r.severity in [Severity.ERROR, Severity.WARNING] for r in val_results): continue
+            has_ann_error = any(getattr(r, "severity", None) in [Severity.ERROR, Severity.WARNING] for r in val_results)
+            has_doc_error = ann.anno_id in doc_error_anno_ids
+            if not has_ann_error and not has_doc_error: continue
         filtered_anns.append(ann)
         filtered_indices.append(i)
     return filtered_anns, filtered_indices
@@ -552,8 +629,8 @@ def _render_ocr_validation_section(selected_ann, doc):
             
         with st.expander("🔍 OCR 상세 비교", expanded=True):
             col_a, col_b = st.columns(2)
-            col_a.text_area("GT Text", value=selected_ann.text, height=100, disabled=True)
-            col_b.text_area("OCR Text", value=ocr_text, height=100, disabled=True)
+            col_a.text_area("GT Text", value=selected_ann.text, height=200, disabled=True)
+            col_b.text_area("OCR Text", value=ocr_text, height=200, disabled=True)
     else:
         st.info("⚠️ 배치 처리가 되지 않은 항목입니다.")
         if st.button("지금 OCR 실행 (1건)"):

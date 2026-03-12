@@ -197,8 +197,17 @@ def _render_main_review(cache: SamplingCache, fname: str, idx: int) -> None:
     # ── 파일명 표시 ────────────────────────────────────────────────────
     result = cache.get_result(fname)
     reviewed = result.get("reviewed", False)
+    
+    # 방금 저장된 상태라면 애니메이션 효과를 위해 세션 상태 확인
+    just_saved = st.session_state.pop(f"just_saved_{fname}", False)
+    
     status_icon = "✅" if reviewed and not result.get("is_error") else ("🔴" if result.get("is_error") else "⬜")
-    st.subheader(f"{status_icon} {idx + 1}. `{fname}`")
+    
+    if just_saved:
+        st.subheader(f"✨ {status_icon} {idx + 1}. `{fname}` (저장 완료!)")
+        st.toast("✅ 검수 결과가 저장되었습니다.", icon="💾")
+    else:
+        st.subheader(f"{status_icon} {idx + 1}. `{fname}`")
 
     # ── 이미지 + 어노테이션 ────────────────────────────────────────────
     col_img, col_panel = st.columns([3, 2])
@@ -213,7 +222,15 @@ def _render_main_review(cache: SamplingCache, fname: str, idx: int) -> None:
                     annotated = draw_annotations_on_image(
                         image.copy(), doc.layout_dets, config, relations=relations
                     )
-                    st.image(annotated, caption=img_name, use_column_width=True)
+                    
+                    # 줌 뷰어 기능 시작
+                    use_zoom = st.toggle("🔍 줌 가능한 이미지 뷰어 사용 (Plotly SVG Overlay)", value=True, key=f"zoom_toggle_{fname}")
+                    if use_zoom:
+                        from src.core.visualizer import create_plotly_figure
+                        fig = create_plotly_figure(image, doc.layout_dets, config, relations=relations)
+                        st.plotly_chart(fig, use_container_width=True, key=f"plotly_{fname}")
+                    else:
+                        st.image(annotated, caption=img_name, use_column_width=True)
                 else:
                     st.warning(f"이미지 파일 없음: `{img_name}`")
             except Exception as e:
@@ -268,28 +285,38 @@ def _render_review_panel(cache: SamplingCache, fname: str, existing: dict) -> No
 
     # 저장 버튼
     if st.button("💾 저장 및 다음으로", type="primary", use_container_width=True, key=f"save_{fname}"):
-        cache.update_result(
-            filename=fname,
-            is_error=is_error,
-            error_types=error_types,
-            memo=memo,
-        )
-        st.toast("✅ 저장됨")
+        with st.spinner("💾 데이터 저장 중..."):
+            import time
+            time.sleep(0.3)  # 애니메이션을 위해 아주 짧은 지연시간 부여 (즉각적인 피드백 체감 유도)
+            cache.update_result(
+                filename=fname,
+                is_error=is_error,
+                error_types=error_types,
+                memo=memo,
+            )
         # 다음 항목으로 자동 이동
         current_idx = st.session_state.get("review_current_idx", 0)
         if current_idx < len(cache.sampled_files) - 1:
             st.session_state["review_current_idx"] = current_idx + 1
+            next_fname = cache.sampled_files[current_idx + 1]
+            st.session_state[f"just_saved_{next_fname}"] = True
+        else:
+            st.session_state[f"just_saved_{fname}"] = True
+            
         st.rerun()
 
     # 저장만 (이동 없음)
     if st.button("💾 저장 (현재 유지)", use_container_width=True, key=f"save_stay_{fname}"):
-        cache.update_result(
-            filename=fname,
-            is_error=is_error,
-            error_types=error_types,
-            memo=memo,
-        )
-        st.toast("✅ 저장됨")
+        with st.spinner("💾 데이터 저장 중..."):
+            import time
+            time.sleep(0.3)
+            cache.update_result(
+                filename=fname,
+                is_error=is_error,
+                error_types=error_types,
+                memo=memo,
+            )
+        st.session_state[f"just_saved_{fname}"] = True
         st.rerun()
 
 

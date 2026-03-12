@@ -67,7 +67,7 @@ def perform_bulk_validation() -> pd.DataFrame:
         try:
             doc = Document.from_json(json_path)
             
-            # 1. Validation Logic
+            # 1. Annotation Level Validation
             for ann in doc.layout_dets:
                 results = validator.validate_annotation(ann)
                 for res in results:
@@ -76,11 +76,28 @@ def perform_bulk_validation() -> pd.DataFrame:
                             "파일": file_name,
                             "카테고리": ann.category_type or "N/A",
                             "어노테이션 ID": ann.anno_id or "N/A",
-                            "순서": ann.order if ann.order is not None else "N/A",
+                            "순서": ann.order if hasattr(ann, 'order') and ann.order is not None else "N/A",
                             "심각도": res.severity.name,
                             "규칙": res.rule_id,
                             "메시지": res.message,
                         })
+                        
+            # 2. Document Level Validation
+            doc_results = validator.validate_document(doc)
+            for res in doc_results:
+                 if res.severity in [Severity.ERROR, Severity.WARNING]:
+                    details = res.details or {}
+                    anno_id_val = details.get("anno_id") or details.get("parent_id") or "N/A"
+                    
+                    report_data.append({
+                        "파일": file_name,
+                        "카테고리": "문서 레벨 오류 (Document)",
+                        "어노테이션 ID": str(anno_id_val),
+                        "순서": "N/A",
+                        "심각도": res.severity.name,
+                        "규칙": res.rule_id,
+                        "메시지": res.message,
+                    })
                         
         except Exception as e:
             # File Load Error
