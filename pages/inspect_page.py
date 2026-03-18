@@ -464,37 +464,21 @@ def _render_main_visual_ui(doc, filtered_anns, filtered_indices, current_filtere
             selected_anno_id=selected_ann.anno_id
         )
         
-        # 줌 뷰어 기능 시작 (상단 노출)
-        use_zoom = st.toggle("🔍 줌 가능한 이미지 뷰어 사용 (Plotly SVG Overlay)", value=False, key="inspect_zoom_toggle")
+        # Streamlit Image Coordinates (기존 인터랙션 기능 유지)
+        coords = streamlit_image_coordinates(annotated_image, key="img_m", use_column_width=True)
         
-        if use_zoom:
-            from src.core.visualizer import create_plotly_figure
-            fig = create_plotly_figure(
-                image, 
-                doc.layout_dets, 
-                config,
-                highlight_indices=[st.session_state.selected_index],
-                relations=relations,
-                show_all_relations=st.session_state.get("show_all_relations", False),
-                selected_anno_id=selected_ann.anno_id
-            )
-            st.plotly_chart(fig, use_container_width=True, key="inspect_plotly")
-        else:
-            # Streamlit Image Coordinates (기존 인터랙션 기능 유지)
-            coords = streamlit_image_coordinates(annotated_image, key="img_m", use_column_width=True)
+        # Interaction Logic
+        if coords:
+            x, y = coords["x"], coords["y"]
             
-            # Interaction Logic
-            if coords:
-                x, y = coords["x"], coords["y"]
-                
-                # Find clicked annotation
-                # Iterate reversed to find top-most
-                for i, ann in reversed(list(enumerate(doc.layout_dets))):
-                    if _is_point_in_poly(x, y, ann.poly):
-                        if st.session_state.selected_index != i:
-                            st.session_state.selected_index = i
-                            st.rerun()
-                        break
+            # Find clicked annotation
+            # Iterate reversed to find top-most
+            for i, ann in reversed(list(enumerate(doc.layout_dets))):
+                if _is_point_in_poly(x, y, ann.poly):
+                    if st.session_state.selected_index != i:
+                        st.session_state.selected_index = i
+                        st.rerun()
+                    break
     else:
         st.error(f"이미지 파일을 찾을 수 없습니다: {full_image_path}")
 

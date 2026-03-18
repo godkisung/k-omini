@@ -16,8 +16,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 DATA_ROOT = os.path.join(PROJECT_ROOT, "data")
 
 # 기본값 (하위 호환성 유지)
-DATA_DIR = os.path.join(PROJECT_ROOT, "data", "Alchera_delivery_P2_260306", "json")
-IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "Alchera_delivery_P2_260306", "img")
+DATA_DIR = os.path.join(PROJECT_ROOT, "data", "Alchera_rework_P1_260317", "json")
+IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "Alchera_rework_P1_260317", "img")
 OCR_CACHE_DIR = ".ocr_cache"
 OCR_CACHE_FILE = os.path.join(PROJECT_ROOT, OCR_CACHE_DIR, "batch_ocr_results.csv")
 
@@ -30,8 +30,13 @@ def get_delivery_batches() -> list[str]:
     Returns:
         배치 폴더명 목록 (basename). 최신 납품 순 내림차순 정렬.
     """
-    pattern = os.path.join(DATA_ROOT, "Alchera_delivery_*")
-    matches = [d for d in glob.glob(pattern) if os.path.isdir(d)]
+    patterns = [
+        os.path.join(DATA_ROOT, "Alchera_delivery_*"),
+        os.path.join(DATA_ROOT, "Alchera_rework_*"),
+    ]
+    matches = []
+    for p in patterns:
+        matches.extend([d for d in glob.glob(p) if os.path.isdir(d)])
     return sorted([os.path.basename(d) for d in matches], reverse=True)
 
 

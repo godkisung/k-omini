@@ -32,7 +32,7 @@ def sampling_page() -> None:
 
     batches = get_delivery_batches()
     if not batches:
-        st.error("❌ `data/` 폴더에 납품 배치가 없습니다. `Alchera_delivery_*` 형태의 폴더를 확인하세요.")
+        st.error("❌ `data/` 폴더에 납품 배치가 없습니다. `Alchera_delivery_*` 또는 `Alchera_rework_*` 형태의 폴더를 확인하세요.")
         return
 
     col1, col2 = st.columns([2, 1])

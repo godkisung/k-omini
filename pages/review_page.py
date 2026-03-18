@@ -223,14 +223,7 @@ def _render_main_review(cache: SamplingCache, fname: str, idx: int) -> None:
                         image.copy(), doc.layout_dets, config, relations=relations
                     )
                     
-                    # 줌 뷰어 기능 시작
-                    use_zoom = st.toggle("🔍 줌 가능한 이미지 뷰어 사용 (Plotly SVG Overlay)", value=True, key=f"zoom_toggle_{fname}")
-                    if use_zoom:
-                        from src.core.visualizer import create_plotly_figure
-                        fig = create_plotly_figure(image, doc.layout_dets, config, relations=relations)
-                        st.plotly_chart(fig, use_container_width=True, key=f"plotly_{fname}")
-                    else:
-                        st.image(annotated, caption=img_name, use_column_width=True)
+                    st.image(annotated, caption=img_name, use_column_width=True)
                 else:
                     st.warning(f"이미지 파일 없음: `{img_name}`")
             except Exception as e:
