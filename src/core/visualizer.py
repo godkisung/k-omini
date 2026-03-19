@@ -94,13 +94,19 @@ def draw_annotations_on_image(
         if len(points) >= 2:
             draw.polygon(points, outline=color, width=current_width)
             
-            # Draw Index/Label
+            # Draw Index/Label (ID & Order)
             text_pos = points[0]
-            label = str(idx)
+            label = f"ID:{ann.anno_id}" if ann.anno_id is not None else f"idx:{idx}"
             if ann.order is not None:
-                label += f" ({ann.order})"
+                label += f" [Ord:{ann.order}]"
             
-            draw.text((text_pos[0], text_pos[1]-20), label, fill=color, font=font)
+            # 텍스트 배경을 그려 가독성 향상 (선택 사항이지만 추천)
+            try:
+                t_bbox = draw.textbbox((text_pos[0], text_pos[1]-40), label, font=font)
+                draw.rectangle(t_bbox, fill="black")
+                draw.text((text_pos[0], text_pos[1]-40), label, fill="white", font=font)
+            except AttributeError:
+                draw.text((text_pos[0], text_pos[1]-40), label, fill=color, font=font)
 
     # 2. Draw Relations
     if relations:

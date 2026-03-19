@@ -103,8 +103,9 @@ class Validator:
         # 2. Table: attribute.include_* 속성 ↔ extra.relation 일관성 검증
         results.extend(self._validate_table_include_relations(doc))
 
-        # 3. Table: HTML 내 anno_id 참조 유효성 검증
+        # 3. Table: HTML 내 anno_id 참조 유효성 검증 및 물리적 포함 관계 검증
         results.extend(self._validate_table_html_anno_refs(doc))
+        results.extend(self._validate_table_spatial_inclusion(doc))
         
         # 4. 모든 Figure 추출
         figures = [ann for ann in doc.layout_dets if ann.category_type == 'figure']
@@ -241,13 +242,15 @@ class Validator:
         # 참조 패턴: $$figure_01$$ 또는 <img src="anno_id_5">
         # $$..._{digits}$$ → 숫자 부분이 anno_id
         pattern_dollar = re.compile(r'\$\$[^$]*_(\d+)\$\$')
-        # anno_id_N (숫자) 패턴
-        pattern_img = re.compile(r'anno_id[_]?(\d+)', re.IGNORECASE)
+        # anno_id_N (숫자) 패턴 - 더 유연하게 (따옴표 포함 가능성 고려)
+        pattern_img = re.compile(r'anno_id(?:_|[^\d]*?)\s*(\d+)', re.IGNORECASE)
         
         tables = [ann for ann in doc.layout_dets if ann.category_type == 'table']
         for tbl in tables:
             html = ''
-            if tbl.raw_data:
+            if tbl.html:
+                 html = str(tbl.html)
+            elif tbl.raw_data:
                 html = str(tbl.raw_data.get('html', ''))
             
             if not html:
@@ -256,9 +259,13 @@ class Validator:
             # 두 패턴으로 참조 ID 추출
             ref_ids: Set[int] = set()
             for m in pattern_dollar.finditer(html):
-                ref_ids.add(int(m.group(1)))
+                try:
+                    ref_ids.add(int(m.group(1)))
+                except ValueError: continue
             for m in pattern_img.finditer(html):
-                ref_ids.add(int(m.group(1)))
+                try:
+                    ref_ids.add(int(m.group(1)))
+                except ValueError: continue
             
             for ref_id in ref_ids:
                 if ref_id not in valid_ids:
@@ -271,6 +278,61 @@ class Validator:
                         details={"anno_id": tbl.anno_id, "ref_id": ref_id}
                     ))
         
+        return results
+
+    def _validate_table_spatial_inclusion(self, doc: Document) -> List[ValidationResult]:
+        """Table 영역 내에 물리적으로 포함된 figure, chart, table이 HTML 내에 참조되고 있는지 검증합니다."""
+        results = []
+        tables = [ann for ann in doc.layout_dets if ann.category_type == 'table']
+        # 하위 요소 후보: figure, chart, table
+        candidates = [ann for ann in doc.layout_dets if ann.category_type in ['figure', 'chart', 'table']]
+        
+        # HTML 내 anno_id 참조 패턴 (유연하게)
+        pattern_ref = re.compile(r'anno_id(?:_|[^\d]*?)\s*(\d+)', re.IGNORECASE)
+
+        for tbl in tables:
+            # HTML 추출
+            html = ''
+            if tbl.html:
+                 html = str(tbl.html)
+            elif tbl.raw_data:
+                html = str(tbl.raw_data.get('html', ''))
+            
+            # HTML 내 존재하는 모든 참조 ID 수집
+            found_ids: Set[int] = set()
+            if html:
+                for m in pattern_ref.finditer(html):
+                    try:
+                        found_ids.add(int(m.group(1)))
+                    except ValueError: continue
+            
+            for child in candidates:
+                if child.anno_id == tbl.anno_id:
+                    continue # 자기 자신 제외
+                
+                # 유효한 폴리곤인지 확인
+                if not child.poly or len(child.poly) < 6 or not tbl.poly or len(tbl.poly) < 6:
+                    continue
+                    
+                # 90% 이상 포함되어 있는지 확인
+                ioa = self._calculate_ioa(tbl.poly, child.poly)
+                
+                if ioa >= 0.90:
+                    if child.anno_id not in found_ids:
+                        results.append(ValidationResult(
+                            rule_id="table_html_missing_spatial_ref",
+                            severity=Severity.ERROR,
+                            message=(
+                                f"Table(ID:{tbl.anno_id}) 영역 내에 '{child.category_type}'(ID:{child.anno_id})이 "
+                                f"위치(IoA:{ioa:.1%})하지만 HTML 내에 참조(<img src='anno_id_{child.anno_id}'>)가 누락되었습니다."
+                            ),
+                            details={
+                                "anno_id": tbl.anno_id, 
+                                "missing_id": child.anno_id, 
+                                "child_type": child.category_type,
+                                "ioa": ioa
+                            }
+                        ))
         return results
 
     def _calculate_ioa(self, parent_poly_coords: List[float], child_poly_coords: List[float], parent_buffer: float = 0.0) -> float:

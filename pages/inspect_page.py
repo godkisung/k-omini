@@ -4,6 +4,7 @@ Streamlit 검수 페이지 - 인덱스 오류 및 LaTeX 렌더링 수정 버전
 import streamlit as st
 import os
 import pandas as pd
+import re
 from PIL import Image
 from streamlit_image_coordinates import streamlit_image_coordinates
 
@@ -168,6 +169,13 @@ def _render_document_validation(doc):
                     f"🖼️ HTML 참조 오류 테이블 크롭 보기", key=f"crop_htmlref_{tbl_id}_{i}"
                 ):
                     _show_single_ann_crop(doc, tbl_id)
+            elif res.rule_id == "table_html_missing_spatial_ref":
+                tbl_id = details.get("anno_id")
+                missing_id = details.get("missing_id")
+                if tbl_id is not None and missing_id is not None and st.button(
+                    f"🖼️ 참조 누락 영역(Table & Child) 크롭 보기", key=f"crop_missing_{tbl_id}_{missing_id}_{i}"
+                ):
+                    _show_cropped_error(doc, tbl_id, missing_id)
             st.markdown("---")
 
 
@@ -339,7 +347,7 @@ def _render_inspection_panel(doc, filtered_anns, filtered_indices, current_filte
     col2.metric("🆔 ID", str(selected_ann.anno_id)[:8] if selected_ann.anno_id else "N/A")
     
     st.markdown("---")
-    _render_content_tab(selected_ann)
+    _render_content_tab(selected_ann, doc)
     
     # OCR 검증 결과 표시
     # Config option for OCR?
@@ -351,7 +359,7 @@ def _render_inspection_panel(doc, filtered_anns, filtered_indices, current_filte
     with st.expander("✅ 검증 결과", expanded=False):
         _render_validation_tab(selected_ann, doc)
 
-def _render_content_tab(selected_ann):
+def _render_content_tab(selected_ann, doc):
     cat = selected_ann.category_type
     attrs = selected_ann.attributes or {}
     
@@ -404,8 +412,34 @@ def _render_content_tab(selected_ann):
         elif cat == 'table':
             type_info = f"({attrs.get('table_layout', 'Table')})"
             
+        # [신규] HTML 내 포함된 ID 추출 및 요약
+        found_ids = sorted(list(set(re.findall(r'anno_id(?:_|[^\d]*?)\s*(\d+)', selected_ann.html, re.IGNORECASE))))
+        if found_ids:
+            st.info(f"🔗 **현재 HTML 내 참조된 ID:** {', '.join([f'[{fid}]' for fid in found_ids])}")
+
         with st.expander(f"📊 HTML 미리보기 {type_info}", expanded=True):
-            st.markdown(selected_ann.html, unsafe_allow_html=True)
+            # 미리보기용 HTML 변환 (액박 방지 및 ID 가독성 향상)
+            # <img src='anno_id_7'> -> 시각적 뱃지로 변환
+            preview_html = selected_ann.html
+            preview_html = re.sub(
+                r"<img[^>]*src=['\"]anno_id_?(\d+)['\"][^>]*>",
+                r"<span style='display: inline-block; background-color: #E1F5FE; color: #01579B; border: 1px solid #01579B; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 13px; margin: 2px;'>🖼️ ID:\1</span>",
+                preview_html,
+                flags=re.IGNORECASE
+            )
+            st.markdown(preview_html, unsafe_allow_html=True)
+        
+        # [신규] 테이블 내 누락 객체 참조 안내
+        if cat == 'table':
+            doc_val_results = validator.validate_document(doc)
+            missing_refs = [res for res in doc_val_results if res.rule_id == "table_html_missing_spatial_ref" and res.details.get("anno_id") == selected_ann.anno_id]
+            if missing_refs:
+                st.error(f"🚨 HTML 내에 참조되지 않은 내부 객체 {len(missing_refs)}건이 발견되었습니다.")
+                for res in missing_refs:
+                    mid = res.details.get("missing_id")
+                    mtype = res.details.get("child_type")
+                    st.code(f"<img src='anno_id_{mid}'>", language="html")
+                    st.caption(f"ID:{mid} ({mtype}) - 테이블 영역 내 위치함. 위 코드를 복사하여 삽입하세요.")
 
 # --- 5. 보조 함수들 ---
 def _render_global_shortcuts():

@@ -16,8 +16,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 DATA_ROOT = os.path.join(PROJECT_ROOT, "data")
 
 # 기본값 (하위 호환성 유지)
-DATA_DIR = os.path.join(PROJECT_ROOT, "data", "Alchera_rework_P1_260317", "json")
-IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "Alchera_rework_P1_260317", "img")
+DATA_DIR = os.path.join(PROJECT_ROOT, "data",  "Alchera_rework_P2_260317", "json")
+IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "Alchera_rework_P2_260317", "img")
 OCR_CACHE_DIR = ".ocr_cache"
 OCR_CACHE_FILE = os.path.join(PROJECT_ROOT, OCR_CACHE_DIR, "batch_ocr_results.csv")
 
@@ -33,6 +33,7 @@ def get_delivery_batches() -> list[str]:
     patterns = [
         os.path.join(DATA_ROOT, "Alchera_delivery_*"),
         os.path.join(DATA_ROOT, "Alchera_rework_*"),
+        os.path.join(DATA_ROOT, "Alchera_final_*"),
     ]
     matches = []
     for p in patterns:
