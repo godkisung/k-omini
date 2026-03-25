@@ -64,6 +64,7 @@ validation_report.csv
 validation_report.xlsx
 *.pdf
 scripts/    
+!scripts/test_deduplication.py
 
 # OCR 캐시
 .ocr_cache/
