@@ -52,6 +52,36 @@ class Annotation:
             raw_data=data
         )
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Annotation 객체의 수정 사항을 raw_data 기반으로 병합하여 Dictionary로 반환합니다."""
+        data = self.raw_data.copy() if self.raw_data else {}
+        data["anno_id"] = getattr(self, "anno_id", -1)
+        data["category_type"] = self.category_type
+        data["poly"] = self.poly
+        if self.order is not None:
+            data["order"] = self.order
+        if self.text is not None or "text" in data:
+            data["text"] = self.text
+        if self.latex is not None or "latex" in data:
+            data["latex"] = self.latex
+        if self.html is not None or "html" in data:
+            data["html"] = self.html
+        if self.caption is not None or "caption" in data:
+            data["caption"] = self.caption
+        data["ignore"] = getattr(self, "ignore", False)
+        
+        # Attribute 업데이트 로직 (다양한 K-Omnidoc 스키마 케이스 호환)
+        if self.attributes:
+            if "attribute" in data and isinstance(data["attribute"], dict):
+                data["attribute"].update(self.attributes)
+            elif "attributes" in data and isinstance(data["attributes"], dict):
+                data["attributes"].update(self.attributes)
+            else:
+                for k, v in self.attributes.items():
+                    data[f"attribute.{k}"] = v
+                    
+        return data
+
 @dataclass
 class Document:
     """문서 전체 데이터를 나타내는 데이터 클래스 (Generic)"""
@@ -60,6 +90,7 @@ class Document:
     layout_dets: List[Annotation]
     image_path: str
     raw_data: Dict[str, Any]  # 원본 전체 데이터
+    filepath: Optional[str] = None # JSON 파일의 실제 경로
 
     @classmethod
     def from_json(cls, json_path: str) -> 'Document':
@@ -87,8 +118,22 @@ class Document:
             page_info=page_info,
             layout_dets=layout_dets,
             image_path=image_path,
-            raw_data=data
+            raw_data=data,
+            filepath=json_path
         )
+        
+    def save(self, save_path: str = None) -> None:
+        """수정된 layout_dets 사항을 raw_data에 반영한 뒤 실제 JSON 파일에 덮어씁니다."""
+        target_path = save_path or self.filepath
+        if not target_path:
+            raise ValueError("저장할 경로(filepath)가 지정되지 않았습니다.")
+            
+        # 1. Annotation들의 변경점을 to_dict() 호출하여 적용
+        self.raw_data["layout_dets"] = [ann.to_dict() for ann in self.layout_dets]
+        
+        # 2. JSON 파일 저장
+        with open(target_path, 'w', encoding='utf-8') as f:
+            json.dump(self.raw_data, f, ensure_ascii=False, indent=2)
 
 def get_json_files(directory: str) -> List[str]:
     """지정된 디렉토리에서 모든 JSON 파일을 가져옵니다."""

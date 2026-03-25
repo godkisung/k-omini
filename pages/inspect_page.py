@@ -642,7 +642,7 @@ def _render_ocr_validation_section(selected_ann, doc):
         ocr_text = str(cached_result['ocr_text'])
         
         if sim >= 0.9: st.success(f"✅ Pass (Sim: {sim:.1%})") # Magic number 0.9 -> Config?
-        elif sim >= 0.7: st.warning(f"⚠️ Warning (Sim: {sim:.1%})")
+        elif sim >= 0.5: st.warning(f"⚠️ Warning (Sim: {sim:.1%})")
         else: st.error(f"🔴 Fail (Sim: {sim:.1%})")
             
         with st.expander("🔍 OCR 상세 비교", expanded=True):

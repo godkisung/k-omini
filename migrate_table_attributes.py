@@ -13,9 +13,10 @@ def migrate_table_line_attributes(data_dir: str):
     
     # 변경 매핑 정의
     line_mapping = {
-        "table_wireless_line": "table_no_line",
-        "table_fewer_line": "table_partial_line",
-        "table_less_line": "table_partial_line"
+        "table_full_line": "full_line",
+        "table_wireless_line": "no_line",
+        "table_fewer_line": "partial_line",
+        "table_less_line": "partial_line"
     }
     
     stats = {
@@ -68,7 +69,7 @@ def migrate_table_line_attributes(data_dir: str):
 if __name__ == "__main__":
     # 데이터 폴더 경로 (현재 위치 기준 data 폴더)
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    DATA_DIRECTORY = os.path.join(current_dir, "data/Alchera_rework_P1_260317")
+    DATA_DIRECTORY = os.path.join(current_dir, "data/poc_ver2")
     
     if os.path.exists(DATA_DIRECTORY):
         migrate_table_line_attributes(DATA_DIRECTORY)
