@@ -1,0 +1,50 @@
+[project]
+name = "k-omini"
+version = "0.1.0"
+description = "K-Omnidoc Duplication Filtering & Analysis Engine"
+readme = "README.md"
+authors = [
+    { name = "kisung", email = "kisung@example.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "accelerate>=1.13.0",
+    "beautifulsoup4>=4.14.3",
+    "easyocr>=1.7.2",
+    "einops>=0.8.2",
+    "huggingface-hub==0.36.2",
+    "lxml>=6.0.2",
+    "matplotlib>=3.10.8",
+    "milvus-lite>=2.5.1",
+    "onnxruntime>=1.24.4",
+    "opencv-python-headless>=4.13.0.92",
+    "openpyxl>=3.1.5",
+    "paddleocr>=3.4.0",
+    "paddlepaddle>=3.3.1",
+    "paddlex>=3.4.2",
+    "pandas>=2.3.3",
+    "pillow>=12.1.1",
+    "pymilvus>=2.6.10",
+    "python-levenshtein>=0.27.3",
+    "rich>=14.3.3",
+    "scipy>=1.17.1",
+    "shapely>=2.1.2",
+    "streamlit>=1.55.0",
+    "streamlit-drawable-canvas>=0.9.3",
+    "streamlit-image-coordinates>=0.4.0",
+    "streamlit-shortcuts>=1.2.1",
+    "timm>=1.0.26",
+    "torch>=2.11.0",
+    "torchaudio>=2.11.0",
+    "torchvision>=0.26.0",
+    "transformers<4.45.0",
+    "typer>=0.24.1",
+]
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch"]

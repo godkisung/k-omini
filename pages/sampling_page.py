@@ -69,6 +69,15 @@ def sampling_page() -> None:
                 help="같은 시드면 동일한 결과. 날짜 기반 기본값 사용 권장.",
             )
 
+        st.divider()
+        use_dedup = st.toggle(
+            "🛑 중복 문서 필터링 (다양성 확보)", 
+            value=True,
+            help="Milvus에 저장된 유사도 데이터를 활용하여, 중복/유사 문서는 대표 1개만 샘플링 대상에 포함합니다."
+        )
+        if use_dedup:
+            dedup_threshold = st.slider("유사도 임계값", 0.80, 0.99, 0.95, 0.01, help="이 점수 이상이면 중복으로 간주합니다.")
+
     # ── 미리보기 ──────────────────────────────────────────────────────
     json_dir, img_dir = get_batch_dirs(selected_batch)
     if not os.path.isdir(json_dir):
@@ -125,6 +134,8 @@ def sampling_page() -> None:
             min_per_type=int(min_per_type),
             seed=int(seed),
             batch_name=selected_batch,
+            use_dedup=use_dedup,
+            dedup_threshold=dedup_threshold if use_dedup else 0.95
         )
 
 
@@ -167,17 +178,45 @@ def _run_sampling(
     min_per_type: int,
     seed: int,
     batch_name: str,
+    use_dedup: bool = False,
+    dedup_threshold: float = 0.95
 ) -> None:
     """샘플링을 실행하고 캐시에 저장합니다."""
     if cache.exists():
         cache.delete()
 
-    sampler = StratifiedSampler(
-        sample_rate=sample_rate,
-        min_per_type=min_per_type,
-        seed=seed,
-    )
-    result = sampler.sample(all_files, batch_name=batch_name)
+    from app_helpers import get_dedup_engine
+    from src.sampling.sampler import SimilarityAwareSampler, StratifiedSampler
+
+    if use_dedup:
+        with st.spinner("📦 Milvus에서 배치 유사도 분석 및 클러스터링 중..."):
+            try:
+                engine = get_dedup_engine()
+                # Stage 1 (Global Vision) 기반 클러스터링
+                clusters = engine.get_batch_clusters(stage=1, threshold=dedup_threshold)
+                
+                sampler = SimilarityAwareSampler(
+                    sample_rate=sample_rate,
+                    min_per_type=min_per_type,
+                    seed=seed,
+                )
+                result = sampler.sample_with_diversity(all_files, clusters, batch_name=batch_name)
+                
+                num_clusters = len(clusters)
+                num_duplicates = sum(len(c) - 1 for c in clusters)
+                st.info(f"🔍 중복 분석 결과: **{num_duplicates}개**의 중복 문서를 발견하여 {num_clusters}개의 대표 그룹으로 압축했습니다.")
+            except Exception as e:
+                st.error(f"❌ 유사도 분석 중 오류 발생: {str(e)}")
+                st.warning("중복 제거 없이 일반 샘플링을 진행합니다.")
+                use_dedup = False
+
+    if not use_dedup:
+        sampler = StratifiedSampler(
+            sample_rate=sample_rate,
+            min_per_type=min_per_type,
+            seed=seed,
+        )
+        result = sampler.sample(all_files, batch_name=batch_name)
 
     cache.init_from_sampling(
         sampled_files=result.sampled_files,

@@ -13,6 +13,30 @@ from typing import List
 from src.config import get_config, DATA_DIR
 from src.core.models import Document, get_json_files as core_get_json_files
 from src.analysis.validator import Validator, Severity
+from src.core.dedup_engine import DocumentDupPipeline
+
+@st.cache_resource
+def get_dedup_engine():
+    """중복 탐지 엔진 싱글톤 인스턴스 반환 (모델 로딩 포함)"""
+    return DocumentDupPipeline()
+
+def perform_visual_search(image, stage=1, label=None, top_k=5):
+    """엔진을 사용하여 시각적 유사도 검색 실행"""
+    engine = get_dedup_engine()
+    
+    if stage == 1:
+        hits = engine.search_stage_1(image, top_k=top_k)
+    elif stage == 2:
+        hits = engine.search_stage_2(image, top_k=top_k)
+    elif stage == 3:
+        hits = engine.search_stage_3(image, label=label, top_k=top_k)
+    else:
+        return pd.DataFrame()
+        
+    if not hits:
+        return pd.DataFrame()
+        
+    return pd.DataFrame(hits)
 
 # Initialize Validator with Config
 config = get_config()

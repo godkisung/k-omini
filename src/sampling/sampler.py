@@ -143,3 +143,51 @@ class StratifiedSampler:
             sampled_files=[os.path.basename(f) for f in sampled_files],
             type_breakdown=type_breakdown,
         )
+
+
+class SimilarityAwareSampler(StratifiedSampler):
+    """유사도 기반 중복 제거 기능이 강화된 샘플러.
+    
+    유사한 문서 묶음(Cluster)이 주어지면, 각 묶음에서 대표 하나만 남기고 나머지는 
+    샘플링 대상에서 제외하여 데이터의 다양성을 확보합니다.
+    """
+
+    def sample_with_diversity(
+        self, 
+        file_paths: list[str], 
+        clusters: list[list[str]], 
+        batch_name: str = ""
+    ) -> SamplingResult:
+        """중복 그룹을 고려하여 다양성이 확보된 샘플을 추출합니다.
+        
+        Args:
+            file_paths: 전체 JSON 파일 경로 목록.
+            clusters: 유사 문서 ID(파일명)들의 리스트 (엔진의 get_batch_clusters 결과).
+            batch_name: 배치 이름.
+        """
+        # 1. 중복 제거 맵 구성
+        # 각 파일이 어떤 대표 파일로 매핑되는지 정의 (클러스터의 첫 번째 요소를 대표로 가정)
+        repr_map = {}
+        duplicates_to_skip = set()
+        
+        for cluster in clusters:
+            if len(cluster) > 1:
+                representative = cluster[0]
+                for doc_id in cluster[1:]:
+                    repr_map[doc_id] = representative
+                    duplicates_to_skip.add(doc_id)
+        
+        # 2. 필터링된 파일 목록 생성
+        # 중복으로 판명된 파일은 제외하고 대표들만 남김
+        diverse_file_paths = []
+        for fp in file_paths:
+            fname = os.path.basename(fp)
+            if fname not in duplicates_to_skip:
+                diverse_file_paths.append(fp)
+        
+        # 3. 기존 층화 샘플링 수행
+        result = self.sample(diverse_file_paths, batch_name=batch_name)
+        
+        # 4. 결과에 중복 제거 통계 보완 (선택 사항: 나중에 UI에서 사용)
+        # 여기서는 단순 샘플링 결과만 반환
+        return result

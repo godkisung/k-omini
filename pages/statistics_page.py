@@ -1,343 +1,199 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-from typing import List
+import numpy as np
+from collections import Counter
+import os
 
-from src import config
-from src.data_engine import Document, get_json_files, load_document
-from src.analysis_engine import (
-    calculate_category_stats,
-    extract_doc_type_from_filename,
-    DOC_TYPE_NAMES,
-    detect_text_length_outliers,
-    detect_bbox_size_outliers,
-    get_statistics_summary,
-    calculate_bbox_area
-)
+from src.core.dedup_engine import DocumentDupPipeline
+from src.config import get_delivery_batches, get_batch_dirs
+from src.core.models import get_json_files
 
-
-
-# 한글 폰트 설정
 def set_korean_font():
-    """한글 폰트 설정"""
-    try:
-        # 시스템에서 사용 가능한 한글 폰트 찾기
-        font_list = fm.findSystemFonts(fontpaths=None, fontext='ttf')
-        korean_fonts = [f for f in font_list if 'Nanum' in f or 'Malgun' in f or 'AppleGothic' in f]
-        
-        if korean_fonts:
-            font_path = korean_fonts[0]
-            font_prop = fm.FontProperties(fname=font_path)
-            plt.rcParams['font.family'] = font_prop.get_name()
-        else:
-            # 기본 폰트 사용
-            plt.rcParams['font.family'] = 'DejaVu Sans'
-    except:
-        plt.rcParams['font.family'] = 'DejaVu Sans'
-    
-    # 마이너스 기호 깨짐 방지
+    """한글 폰트 설정 (기본값 사용)"""
+    plt.rcParams['font.family'] = 'DejaVu Sans'
     plt.rcParams['axes.unicode_minus'] = False
 
+def get_doc_type(filename: str) -> str:
+    """파일명에서 문서 타입(Prefix) 추출"""
+    if "_" in filename:
+        return filename.split("_")[0]
+    return "UNKNOWN"
 
 def statistics_page():
-    """통계 페이지 메인 함수"""
-    st.header("📊 라벨 작업 품질 분석")
-    
-    # 한글 폰트 설정
+    st.header("📊 데이터 중복 및 정제 통계")
+    st.caption("Milvus Vector DB 분석을 통한 데이터셋 품질 및 정제 효율 지표")
+
     set_korean_font()
-    
-    # 파일 로드
-    json_files = get_json_files()
-    
-    if not json_files:
-        st.warning("분석할 파일이 없습니다.")
+
+    # --- 1. 엔진 및 배치 선택 ---
+    batches = get_delivery_batches()
+    if not batches:
+        st.warning("경고: `data/` 폴더 내에 유효한 납품 배치 폴더가 없습니다.")
         return
-    
-    # 문서 타입 추출
-    doc_types = set()
-    for filename in json_files:
-        doc_type = extract_doc_type_from_filename(filename)
-        if doc_type != 'DEFAULT':
-            doc_types.add(doc_type)
-    
-    # 사이드바: 필터
-    st.sidebar.header("🔍 필터")
-    
-    doc_type_options = ['전체'] + sorted(list(doc_types))
-    selected_doc_type = st.sidebar.selectbox(
-        "문서 타입",
-        options=doc_type_options,
-        format_func=lambda x: f"{x} ({DOC_TYPE_NAMES.get(x, x)})" if x != '전체' else x
-    )
-    
-    # 분석 실행 버튼
-    if st.sidebar.button("🚀 분석 실행", type="primary"):
-        st.session_state.analysis_done = True
-    
-    if not st.session_state.get('analysis_done', False):
-        st.info("👈 사이드바에서 '분석 실행' 버튼을 클릭하세요.")
-        return
-    
-    # 문서 로드
-    with st.spinner("문서를 로드하는 중..."):
-        docs: List[Document] = []
-        progress_bar = st.progress(0)
-        
-        for i, filename in enumerate(json_files):
-            doc = load_document(filename)
-            docs.append(doc)
-            progress_bar.progress((i + 1) / len(json_files))
-        
-        progress_bar.empty()
-    
-    # 문서 타입 필터 적용
-    doc_type_filter = None if selected_doc_type == '전체' else selected_doc_type
-    
-    # 탭 구분
-    tab1, tab2, tab3 = st.tabs(["📈 기본 통계", "⚠️ 이상치 분석", "📊 상세 분석"])
-    
-    with tab1:
-        _render_basic_statistics(docs, doc_type_filter)
-    
-    with tab2:
-        _render_outlier_analysis(docs, doc_type_filter)
-    
-    with tab3:
-        _render_detailed_analysis(docs, doc_type_filter)
 
+    selected_batch = st.sidebar.selectbox("통계 분석 대상 배치", options=batches)
+    
+    threshold = st.sidebar.slider("유사도 임계값 (분석용)", 0.80, 0.99, 0.95, 0.01)
 
-def _render_basic_statistics(docs: List[Document], doc_type_filter: str):
-    """기본 통계 렌더링"""
-    st.subheader("📈 기본 통계")
-    
-    # 통계 요약
-    stats = get_statistics_summary(docs, doc_type_filter)
-    
-    # 메트릭 표시
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("총 파일 수", f"{stats['total_files']:,}")
-    with col2:
-        st.metric("총 어노테이션 수", f"{stats['total_annotations']:,}")
-    with col3:
-        st.metric("평균 텍스트 길이", f"{stats['text_length']['mean']:.1f}자")
-    with col4:
-        st.metric("평균 영역 비율", f"{stats['bbox_area']['mean']:.1f}%")
-    
-    # 카테고리 분포
-    st.markdown("---")
-    st.subheader("📊 카테고리 분포")
-    
-    if stats['category_distribution']:
-        category_df = pd.DataFrame([
-            {'카테고리': k, '개수': v}
-            for k, v in sorted(stats['category_distribution'].items(), key=lambda x: -x[1])
-        ])
-        
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            st.dataframe(category_df, width="stretch", height=400)
-        
-        with col2:
-            fig, ax = plt.subplots(figsize=(8, 6))
-            ax.barh(category_df['카테고리'], category_df['개수'])
-            ax.set_xlabel('개수')
-            ax.set_title('카테고리별 어노테이션 개수')
-            plt.tight_layout()
-            st.pyplot(fig)
-    else:
-        st.info("카테고리 분포 데이터가 없습니다.")
+    # 파이프라인 초기화
+    if "dedup_pipeline" not in st.session_state:
+        try:
+            with st.status("엔진 로딩 중...", expanded=False):
+                st.session_state.dedup_pipeline = DocumentDupPipeline()
+        except Exception as e:
+            st.error(f"엔진 로드 실패: {str(e)}")
+            return
 
+    pipeline = st.session_state.dedup_pipeline
 
-def _render_outlier_analysis(docs: List[Document], doc_type_filter: str):
-    """이상치 분석 렌더링"""
-    st.subheader("⚠️ 이상치 분석")
-    
-    # 텍스트 길이 이상치
-    with st.spinner("텍스트 길이 이상치 탐지 중..."):
-        text_outliers = detect_text_length_outliers(docs, doc_type_filter)
-    
-    # 폴리곤 크기 이상치
-    with st.spinner("폴리곤 크기 이상치 탐지 중..."):
-        bbox_outliers = detect_bbox_size_outliers(docs, doc_type_filter)
-    
-    # 요약
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("텍스트 길이 이상치", f"{len(text_outliers):,}개")
-    with col2:
-        st.metric("폴리곤 크기 이상치", f"{len(bbox_outliers):,}개")
-    
-    # 텍스트 길이 이상치
-    st.markdown("---")
-    st.markdown("### 📏 텍스트 길이 이상치")
-    
-    if text_outliers:
-        text_df = pd.DataFrame(text_outliers)
-        
-        # Arrow 변환 오류 방지: 타입 변환 강화
-        for col in text_df.columns:
-            if col in ['anno_id', 'file', 'doc_type', 'category', 'reason', 'text_preview']:
-                text_df[col] = text_df[col].astype(str).replace('nan', '')
-            elif col in ['min', 'max', 'length', 'order']:
-                text_df[col] = pd.to_numeric(text_df[col], errors='coerce').fillna(0)
+    if st.sidebar.button("🚀 통계 결과 업데이트", type="primary", use_container_width=True):
+        st.session_state.stats_refresh = True
+
+    # --- 2. 데이터 분석 실행 ---
+    with st.spinner("📦 배치의 모든 벡터를 분석하여 클러스터링 중..."):
+        try:
+            # 1. 클러스터링 결과 가져오기
+            clusters = pipeline.get_batch_clusters(stage=1, threshold=threshold)
             
-        # order는 int로 변환
-        if 'order' in text_df.columns:
-            text_df['order'] = text_df['order'].astype(int)
-        if 'length' in text_df.columns:
-            text_df['length'] = text_df['length'].astype(int)
-        
-        # 필터
-        col1, col2 = st.columns(2)
-        with col1:
-            reason_filter = st.multiselect(
-                "이유 필터",
-                options=sorted(list(text_df['reason'].unique())),
-                default=sorted(list(text_df['reason'].unique()))
-            )
-        with col2:
-            category_filter = st.multiselect(
-                "카테고리 필터",
-                options=sorted(list(text_df['category'].unique())),
-                default=sorted(list(text_df['category'].unique()))
-            )
-        
-        filtered_text_df = text_df[
-            text_df['reason'].isin(reason_filter) &
-            text_df['category'].isin(category_filter)
-        ]
-        
-        st.dataframe(filtered_text_df, width="stretch", height=400)
-        
-        # 다운로드
-        csv = filtered_text_df.to_csv(index=False, encoding='utf-8-sig')
-        st.download_button(
-            "📥 CSV로 다운로드",
-            csv,
-            "text_length_outliers.csv",
-            "text/csv",
-            key='download_text_outliers'
-        )
-    else:
-        st.success("✅ 텍스트 길이 이상치가 없습니다!")
-    
-    # 폴리곤 크기 이상치
-    st.markdown("---")
-    st.markdown("### 📐 폴리곤 크기 이상치")
-    
-    if bbox_outliers:
-        bbox_df = pd.DataFrame(bbox_outliers)
-        
-        # Arrow 변환 오류 방지: 타입 변환 강화
-        for col in bbox_df.columns:
-            if col in ['anno_id', 'file', 'doc_type', 'category', 'reason']:
-                bbox_df[col] = bbox_df[col].astype(str).replace('nan', '')
-            elif col in ['width', 'height', 'area', 'area_ratio', 'aspect_ratio', 'min_ratio', 'max_ratio', 'order']:
-                bbox_df[col] = pd.to_numeric(bbox_df[col], errors='coerce').fillna(0)
-        
-        # order는 int로 변환
-        if 'order' in bbox_df.columns:
-            bbox_df['order'] = bbox_df['order'].astype(int)
-        
-        # 필터
-        col1, col2 = st.columns(2)
-        with col1:
-            reason_filter = st.multiselect(
-                "이유 필터",
-                options=sorted(list(bbox_df['reason'].unique())),
-                default=sorted(list(bbox_df['reason'].unique())),
-                key='bbox_reason_filter'
-            )
-        with col2:
-            category_filter = st.multiselect(
-                "카테고리 필터",
-                options=sorted(list(bbox_df['category'].unique())),
-                default=sorted(list(bbox_df['category'].unique())),
-                key='bbox_category_filter'
-            )
-        
-        filtered_bbox_df = bbox_df[
-            bbox_df['reason'].isin(reason_filter) &
-            bbox_df['category'].isin(category_filter)
-        ]
-        
-        st.dataframe(filtered_bbox_df, width="stretch", height=400)
-        
-        # 다운로드
-        csv = filtered_bbox_df.to_csv(index=False, encoding='utf-8-sig')
-        st.download_button(
-            "📥 CSV로 다운로드",
-            csv,
-            "bbox_size_outliers.csv",
-            "text/csv",
-            key='download_bbox_outliers'
-        )
-    else:
-        st.success("✅ 폴리곤 크기 이상치가 없습니다!")
+            if not clusters:
+                st.info("💡 분석할 데이터가 DB에 없습니다. 'Duplicate Detector' 페이지에서 먼저 탐지를 실행하세요.")
+                return
 
+            # 전체 문서 (클러스터에 포함된 모든 ID)
+            all_ids = []
+            for c in clusters:
+                all_ids.extend(c)
+            
+            total_docs = len(all_ids)
+            unique_docs = len(clusters)
+            duplicate_docs = total_docs - unique_docs
+            dedup_rate = (duplicate_docs / total_docs * 100) if total_docs > 0 else 0
 
-def _render_detailed_analysis(docs: List[Document], doc_type_filter: str):
-    """상세 분석 렌더링"""
-    st.subheader("📊 상세 분석")
-    
-    # 텍스트 길이 분포
-    st.markdown("### 📏 텍스트 길이 분포")
-    
-    text_lengths = []
-    for doc in docs:
-        if doc_type_filter:
-            doc_type = extract_doc_type_from_filename(doc.filename)
-            if doc_type != doc_type_filter:
-                continue
-        
-        for ann in doc.layout_dets:
-            if ann.text:
-                text_lengths.append(len(ann.text))
-    
-    if text_lengths:
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.hist(text_lengths, bins=50, edgecolor='black', alpha=0.7)
-        ax.set_xlabel('텍스트 길이 (자)')
-        ax.set_ylabel('빈도')
-        ax.set_title('텍스트 길이 분포')
-        ax.grid(True, alpha=0.3)
-        plt.tight_layout()
-        st.pyplot(fig)
-    else:
-        st.info("텍스트 데이터가 없습니다.")
-    
-    # 폴리곤 크기 분포
-    st.markdown("---")
-    st.markdown("### 📐 폴리곤 크기 분포")
-    
-    bbox_areas = []
-    for doc in docs:
-        if doc_type_filter:
-            doc_type = extract_doc_type_from_filename(doc.filename)
-            if doc_type != doc_type_filter:
-                continue
-        
-        page_area = doc.page_info.width * doc.page_info.height
-        for ann in doc.layout_dets:
-            if ann.poly:
-                size_info = calculate_bbox_area(ann.poly)
-                bbox_areas.append(size_info['area'] / page_area * 100)
-    
-    if bbox_areas:
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.hist(bbox_areas, bins=50, edgecolor='black', alpha=0.7)
-        ax.set_xlabel('영역 비율 (%)')
-        ax.set_ylabel('빈도')
-        ax.set_title('폴리곤 크기 분포 (페이지 대비 비율)')
-        ax.grid(True, alpha=0.3)
-        plt.tight_layout()
-        st.pyplot(fig)
-    else:
-        st.info("폴리곤 데이터가 없습니다.")
+            # 3. 메인 지표 표시
+            st.divider()
+            m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+            m_col1.metric("전체 문서 수", f"{total_docs:,}")
+            m_col2.metric("고유 문서 수", f"{unique_docs:,}")
+            m_col3.metric("중복 제거 수", f"{duplicate_docs:,}", delta=f"-{dedup_rate:.1f}%", delta_color="inverse")
+            m_col4.metric("최종 압축률", f"{(total_docs/unique_docs if unique_docs > 0 else 1):.2f}x")
 
+            # 4. 시각화 섹션
+            st.write("")
+            v_col1, v_col2 = st.columns(2)
+
+            with v_col1:
+                # [Chart 1] Duplicate Ratio (Pie Chart)
+                st.subheader("📍 Data Composition")
+                fig1, ax1 = plt.subplots(figsize=(6, 6))
+                labels = ['Unique', 'Duplicate']
+                sizes = [unique_docs, duplicate_docs]
+                colors = ['#4CAF50', '#FF5252']
+                ax1.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=colors, explode=(0.05, 0))
+                ax1.axis('equal')
+                st.pyplot(fig1)
+
+            with v_col2:
+                # [Chart 2] Cluster Size Distribution (Histogram)
+                st.subheader("📏 Cluster Size Distribution")
+                cluster_sizes = [len(c) for c in clusters if len(c) > 1] # Groups with 2+ docs
+                if cluster_sizes:
+                    counts = Counter(cluster_sizes)
+                    size_labels = sorted(counts.keys())
+                    size_values = [counts[s] for s in size_labels]
+                    
+                    fig2, ax2 = plt.subplots(figsize=(8, 6))
+                    ax2.bar([f"Size {s}" for s in size_labels], size_values, color='#2196F3')
+                    ax2.set_ylabel("Count of Groups")
+                    ax2.set_xlabel("Documents per Cluster")
+                    ax2.set_title("How many duplicates per group?")
+                    st.pyplot(fig2)
+                else:
+                    st.info("No duplicated clusters found.")
+
+            # [Chart 3] Deduplication by Document Type
+            st.divider()
+            st.subheader("📂 Refinement Effect by Type (Top 10)")
+            
+            type_stats = defaultdict(lambda: {"total": 0, "unique": 0})
+            for cluster in clusters:
+                rep_type = get_doc_type(cluster[0])
+                type_stats[rep_type]["unique"] += 1
+                for doc in cluster:
+                    dtype = get_doc_type(doc)
+                    type_stats[dtype]["total"] += 1
+            
+            type_df_data = []
+            for dtype, counts in type_stats.items():
+                if dtype == "UNKNOWN": continue
+                type_df_data.append({
+                    "Type": dtype,
+                    "Total": counts["total"],
+                    "Unique": counts["unique"],
+                    "Dup_Rate": (1 - counts["unique"]/counts["total"]) * 100
+                })
+            
+            if type_df_data:
+                df_types = pd.DataFrame(type_df_data).sort_values("Total", ascending=False).head(10)
+                
+                fig3, ax3 = plt.subplots(figsize=(10, 5))
+                x = np.arange(len(df_types))
+                width = 0.35
+                
+                ax3.bar(x - width/2, df_types['Total'], width, label='Original', color='#BBDEFB')
+                ax3.bar(x + width/2, df_types['Unique'], width, label='Refined', color='#1976D2')
+                
+                ax3.set_xticks(x)
+                ax3.set_xticklabels(df_types['Type'], rotation=45)
+                ax3.legend()
+                ax3.set_title("Data Volume Reduction by Type")
+                st.pyplot(fig3)
+                
+                # 상세 표
+                st.dataframe(df_types.style.format({"Dup_Rate": "{:.1f}%"}), use_container_width=True)
+
+            # [Section 4] Visual Examples of Duplicates
+            st.divider()
+            st.subheader("🖼️ Example Duplicated Groups (Samples)")
+            st.write("Visual comparison of identified duplicates for reporting.")
+            
+            dup_clusters = [c for c in clusters if len(c) > 1]
+            if not dup_clusters:
+                st.info("No duplication found to display visual examples.")
+            else:
+                _, img_dir = get_batch_dirs(selected_batch)
+                
+                # Show top 5 examples
+                for i, cluster in enumerate(dup_clusters[:5]):
+                    with st.expander(f"Group {i+1}: {len(cluster)} documents", expanded=True):
+                        # Show representative vs one of the duplicates
+                        cols = st.columns(min(len(cluster), 4)) 
+                        for j, doc_id in enumerate(cluster[:4]): # Limit to 4 images per row
+                            with cols[j]:
+                                # filename -> img path
+                                img_name = doc_id.replace(".json", ".img") # Heuristic: name mapping
+                                # Actually use the correct mapping (json -> img)
+                                # For safety, try common extensions
+                                possible_exts = [".img", ".jpg", ".png", ".jpeg"]
+                                img_path = None
+                                base_name = doc_id.rsplit('.', 1)[0]
+                                
+                                for ext in possible_exts:
+                                    p = os.path.join(img_dir, base_name + ext)
+                                    if os.path.exists(p):
+                                        img_path = p
+                                        break
+                                
+                                if img_path:
+                                    st.image(img_path, caption=f"{'🏆 Rep' if j==0 else '👯 Dup'}\n{doc_id}", use_column_width=True)
+                                else:
+                                    st.warning(f"Image not found: {doc_id}")
+            
+        except Exception as e:
+            st.error(f"Error during analysis: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
 
 if __name__ == "__main__":
+    from collections import defaultdict
     statistics_page()
