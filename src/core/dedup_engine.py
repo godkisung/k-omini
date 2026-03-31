@@ -36,10 +36,13 @@ class DocumentDupPipeline:
         # GPU 종류에 따른 모델 데이터 타입 (dtype) 자동 결정
         # 1080 Ti(Pascal)는 FP16 연산이 비효율적/불안정하므로 FP32(float32) 강제 할당
         # 최신 RTX 5070 Ti(Ada) 등은 효율성을 위해 FP16(float16) 할당
-        self.dtype = torch.float32
+        self.use_flash_attn = True
         if num_gpus > 0:
             gpu_name = torch.cuda.get_device_name(0).lower()
-            if "1080" not in gpu_name:
+            if "1080" in gpu_name:
+                self.dtype = torch.float32
+                self.use_flash_attn = False
+            else:
                 self.dtype = torch.float16
         
         self.dim_stage1 = 1024  # Jina-clip-v2 embedding dim
@@ -68,11 +71,13 @@ class DocumentDupPipeline:
             # Stage 3: Region Object Detection using Florence-2 (GPU 1)
             self.flo_processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base", trust_remote_code=True)
             
-            # [FIX 1] device_map을 추가하여 로드 시점부터 바로 GPU에 안착 (Flash Attention 2 경고 해결)
+            # [FIX 1] 1080 Ti는 Flash Attention 2를 지원하지 않으므로 조건부 실행
+            attn_implementation = "flash_attention_2" if self.use_flash_attn else None
+            
             self.flo_model = AutoModelForCausalLM.from_pretrained(
                 "microsoft/Florence-2-base", 
                 trust_remote_code=True,
-                attn_implementation="flash_attention_2",
+                attn_implementation=attn_implementation,
                 torch_dtype=self.dtype,
                 device_map=self.device_light
             )
@@ -144,6 +149,15 @@ class DocumentDupPipeline:
                 index_name=index_name
             )
         collection.load()
+
+    def flush_all(self):
+        """저장된 데이터를 즉시 조회/쿼리(statistics 페이지 등)에 반영하기 위해 디스크로 강제 동기화 수행."""
+        try:
+            if self.exact_col is not None: self.exact_col.flush()
+            if self.template_col is not None: self.template_col.flush()
+            if self.region_col is not None: self.region_col.flush()
+        except Exception:
+            pass
 
     def process_stage_1_exact(self, doc_id: str, image: Image.Image) -> List[float]:
         """

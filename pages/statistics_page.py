@@ -158,6 +158,9 @@ def statistics_page():
             st.write("Visual comparison of identified duplicates for reporting.")
             
             dup_clusters = [c for c in clusters if len(c) > 1]
+            # 가장 중복이 심한(문서 수가 많은) 그룹부터 보여주도록 내림차순 정렬 추가
+            dup_clusters.sort(key=len, reverse=True)
+            
             if not dup_clusters:
                 st.info("No duplication found to display visual examples.")
             else:
@@ -170,18 +173,30 @@ def statistics_page():
                         cols = st.columns(min(len(cluster), 4)) 
                         for j, doc_id in enumerate(cluster[:4]): # Limit to 4 images per row
                             with cols[j]:
-                                # filename -> img path
-                                img_name = doc_id.replace(".json", ".img") # Heuristic: name mapping
-                                # Actually use the correct mapping (json -> img)
-                                # For safety, try common extensions
-                                possible_exts = [".img", ".jpg", ".png", ".jpeg"]
+                                # (전체 배치)가 선택된 경우, 어떤 폴더에 있는 이미지인지 알 수 없으므로 모든 배치의 img_dir를 순회하여 찾습니다.
+                                target_img_dirs = [get_batch_dirs(b)[1] for b in batch_dirs] if selected_batch == "(전체 배치)" else [img_dir]
                                 img_path = None
-                                base_name = doc_id.rsplit('.', 1)[0]
                                 
-                                for ext in possible_exts:
-                                    p = os.path.join(img_dir, base_name + ext)
+                                for t_dir in target_img_dirs:
+                                    if not t_dir or not os.path.exists(t_dir):
+                                        continue
+                                        
+                                    # 1. 원본 파일명 그대로 탐색 (이미지 단독 모드 등)
+                                    p = os.path.join(t_dir, doc_id)
                                     if os.path.exists(p):
                                         img_path = p
+                                        break
+                                        
+                                    # 2. doc_id가 .json이라 가정하고 확장자를 바꿔서 탐색 (기존 휴리스틱 폴백)
+                                    possible_exts = [".img", ".jpg", ".png", ".jpeg", ".JPG", ".PNG"]
+                                    base_name = doc_id.rsplit('.', 1)[0]
+                                    for ext in possible_exts:
+                                        p_ext = os.path.join(t_dir, base_name + ext)
+                                        if os.path.exists(p_ext):
+                                            img_path = p_ext
+                                            break
+                                            
+                                    if img_path:
                                         break
                                 
                                 if img_path:

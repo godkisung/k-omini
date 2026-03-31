@@ -16,14 +16,14 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 DATA_ROOT = os.path.join(PROJECT_ROOT, "data", "2.result")
 
 # 기본값 (하위 호환성 유지)
-DATA_DIR = os.path.join(PROJECT_ROOT, "data",  "2.result" , "Alchera_final_P2_260317", "json")
-IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "2.result" , "Alchera_final_P2_260317", "img")
+DATA_DIR = os.path.join(PROJECT_ROOT, "data",  "2.result" , "Alchera_final_P1_260317", "json")
+IMAGE_DIR = os.path.join(PROJECT_ROOT, "data", "2.result" , "Alchera_final_P1_260317", "img")
 OCR_CACHE_DIR = ".ocr_cache"
 OCR_CACHE_FILE = os.path.join(PROJECT_ROOT, OCR_CACHE_DIR, "batch_ocr_results.csv")
 
 
 def get_delivery_batches() -> list[str]:
-    """data/ 하위의 납품 배치 폴더 목록을 반환합니다.
+    """data/2.result 또는 sample/01_sample 하위의 납품 배치 폴더 목록을 반환합니다.
 
     'Alchera_delivery_*' 패턴의 폴더를 인식합니다.
 
@@ -34,6 +34,8 @@ def get_delivery_batches() -> list[str]:
         os.path.join(DATA_ROOT, "Alchera_delivery_*"),
         os.path.join(DATA_ROOT, "Alchera_rework_*"),
         os.path.join(DATA_ROOT, "Alchera_final_*"),
+        os.path.join(PROJECT_ROOT, "sample", "01_sample", "Alchera_delivery_*"),
+        os.path.join(PROJECT_ROOT, "sample", "01_sample", "Alchera_rework_*"),
     ]
     matches = []
     for p in patterns:
@@ -43,6 +45,8 @@ def get_delivery_batches() -> list[str]:
 
 def get_batch_dirs(batch_name: str) -> tuple[str, str]:
     """배치명으로 json/img 디렉토리 경로를 반환합니다.
+    
+    sample/01_sample 또는 data/2.result 경로에서 찾습니다.
 
     Args:
         batch_name: 납품 배치 폴더명 (예: 'Alchera_delivery_P1_260227').
@@ -50,6 +54,20 @@ def get_batch_dirs(batch_name: str) -> tuple[str, str]:
     Returns:
         (json_dir, img_dir) 절대 경로 튜플.
     """
-    base = os.path.join(DATA_ROOT, batch_name)
-    return os.path.join(base, "json"), os.path.join(base, "img")
+    # sample/01_sample에서 먼저 찾기
+    sample_base = os.path.join(PROJECT_ROOT, "sample", "01_sample", batch_name)
+    if os.path.exists(sample_base):
+        json_dir = os.path.join(sample_base, "json")
+        img_dir = os.path.join(sample_base, "img")
+        if not os.path.exists(img_dir) and any(f.lower().endswith(('.jpg', '.png', '.jpeg')) for f in os.listdir(sample_base) if os.path.isfile(os.path.join(sample_base, f))):
+            img_dir = sample_base
+        return json_dir, img_dir
+    
+    # 없으면 data/2.result에서 찾기
+    data_base = os.path.join(DATA_ROOT, batch_name)
+    json_dir = os.path.join(data_base, "json")
+    img_dir = os.path.join(data_base, "img")
+    if os.path.exists(data_base) and not os.path.exists(img_dir) and any(f.lower().endswith(('.jpg', '.png', '.jpeg')) for f in os.listdir(data_base) if os.path.isfile(os.path.join(data_base, f))):
+        img_dir = data_base
+    return json_dir, img_dir
 

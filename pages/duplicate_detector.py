@@ -39,22 +39,45 @@ def duplicate_detector_page():
         selected_batch = st.selectbox("탐지 대상 배치 선택", options=batches)
         json_dir, img_dir = get_batch_dirs(selected_batch)
     
+    # 파일 목록 로드 (JSON 우선, 없으면 Image Fallback)
+    all_json_files = []
+    if os.path.exists(json_dir):
+        all_json_files = get_json_files(json_dir)
+    
+    is_image_only = len(all_json_files) == 0
+    all_image_files = []
+    
+    if is_image_only and os.path.exists(img_dir):
+        valid_exts = ('.jpg', '.jpeg', '.png')
+        all_image_files = [f for f in os.listdir(img_dir) if f.lower().endswith(valid_exts)]
+        all_image_files.sort()
+        
+    if not all_json_files and not all_image_files:
+        st.error("해당 배치에 분석할 JSON 메타데이터나 이미지 파일이 없습니다.")
+        return
+
     with col2:
         # 필터링 옵션
         st.write("") # 간격 조절
+        
+        if is_image_only:
+            st.warning("⚠️ JSON 없음: 이미지 단독 모드로 실행 (Template 단계 제외)")
+            options = ["Stage 1 (Exact)", "Stage 3 (Region)"]
+            default_options = ["Stage 1 (Exact)"]
+        else:
+            options = ["Stage 1 (Exact)", "Stage 2 (Template)", "Stage 3 (Region)"]
+            default_options = ["Stage 1 (Exact)", "Stage 2 (Template)"]
+            
         process_mode = st.multiselect(
             "실행 단계 선택",
-            options=["Stage 1 (Exact)", "Stage 2 (Template)", "Stage 3 (Region)"],
-            default=["Stage 1 (Exact)", "Stage 2 (Template)"]
+            options=options,
+            default=default_options
         )
 
-    # 파일 목록 로드
-    all_json_files = get_json_files(json_dir)
-    if not all_json_files:
-        st.error("해당 배치에 JSON 파일이 없습니다.")
-        return
-
-    st.write(f"📁 총 **{len(all_json_files)}개**의 문서를 탐지 대상으로 시스템에 등록합니다.")
+    total_files = len(all_image_files) if is_image_only else len(all_json_files)
+    target_files = all_image_files if is_image_only else all_json_files
+    
+    st.write(f"📁 총 **{total_files}개**의 문서를 탐지 대상으로 시스템에 등록합니다.")
 
     # --- 3. 실행 제어 ---
     if st.button("🚀 중복 탐지 프로세스 시작", type="primary", use_container_width=True):
@@ -64,23 +87,27 @@ def duplicate_detector_page():
         results = []
         pipeline = st.session_state.dedup_pipeline
         
-        for i, json_path in enumerate(all_json_files):
-            filename = os.path.basename(json_path)
-            status_text.text(f"처리 중 ({i+1}/{len(all_json_files)}): {filename}")
+        for i, file_path in enumerate(target_files):
+            filename = os.path.basename(file_path)
+            status_text.text(f"처리 중 ({i+1}/{total_files}): {filename}")
             
             try:
-                # 1. 문서 로드
-                doc = Document.from_json(json_path)
-                # 이미지 경로 보정 (img_dir 기준)
-                img_name = os.path.basename(doc.image_path)
-                abs_img_path = os.path.join(img_dir, img_name)
+                doc = None
+                if is_image_only:
+                    abs_img_path = os.path.join(img_dir, filename)
+                    doc_id = filename
+                else:
+                    # 1. 문서 로드
+                    doc = Document.from_json(file_path)
+                    img_name = os.path.basename(doc.image_path)
+                    abs_img_path = os.path.join(img_dir, img_name)
+                    doc_id = filename
                 
                 if not os.path.exists(abs_img_path):
                     st.warning(f"이미지 파일을 찾을 수 없음: {abs_img_path}")
                     continue
                 
                 img = Image.open(abs_img_path).convert("RGB")
-                doc_id = filename
                 
                 row = {"doc_id": doc_id}
                 
@@ -90,7 +117,7 @@ def duplicate_detector_page():
                     row["stage1_done"] = True
                 
                 # Update: Stage 2
-                if "Stage 2 (Template)" in process_mode:
+                if "Stage 2 (Template)" in process_mode and doc is not None:
                     emb2 = pipeline.process_stage_2_template(doc)
                     row["stage2_done"] = True
                 
@@ -104,9 +131,13 @@ def duplicate_detector_page():
             except Exception as e:
                 st.error(f"오류 발생 ({filename}): {str(e)}")
             
-            progress_bar.progress((i + 1) / len(all_json_files))
+            progress_bar.progress((i + 1) / total_files)
             
         status_text.text("✅ 처리 완료!")
+        
+        # 처리 완료 후 명시적 Flush 수행하여 DB 누적(쿼리용 로드) 즉시 반영
+        if hasattr(pipeline, "flush_all"):
+            pipeline.flush_all()
         
         # 결과 표시
         if results:
