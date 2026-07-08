@@ -13,13 +13,23 @@ logger = logging.getLogger(__name__)
 
 @st.cache_resource
 def get_ocr_engine() -> Optional[easyocr.Reader]:
-    """EasyOCR (Fast Lane) - 단순 텍스트용"""
+    """EasyOCR (Fast Lane) - 단순 텍스트용
+
+    일부 구형 GPU(예: Pascal 아키텍처 GTX 1080 Ti, SM 6.1)는 최신 torch가 요구하는
+    cuDNN 버전의 RNN(LSTM) 커널을 지원하지 않아 GPU 모드 초기화 자체가
+    RuntimeError로 실패한다. 이 경우 조용히 OCR이 죽지 않도록 CPU로 폴백한다.
+    """
+    use_gpu = torch.cuda.is_available()
+    if use_gpu:
+        try:
+            return easyocr.Reader(['ko', 'en'], gpu=True, verbose=False)
+        except Exception as e:
+            logger.warning(f"⚠️ EasyOCR GPU 초기화 실패, CPU로 재시도: {str(e)}")
+
     try:
-        use_gpu = torch.cuda.is_available()
-        reader = easyocr.Reader(['ko', 'en'], gpu=use_gpu, verbose=False)
-        return reader
+        return easyocr.Reader(['ko', 'en'], gpu=False, verbose=False)
     except Exception as e:
-        logger.error(f"❌ EasyOCR 초기화 실패: {str(e)}")
+        logger.error(f"❌ EasyOCR 초기화 실패 (CPU 폴백도 실패): {str(e)}")
         return None
 
 def extract_text_from_region(

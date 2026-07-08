@@ -78,9 +78,9 @@ dis/
 .env.local
 
 # EasyOCR Fine-tuning
-easyocr_trainer/trainer/saved_models/
-easyocr_trainer/trainer/all_data/
-easyocr_trainer/trainer/log_*.txt
+# easyocr_trainer는 JaidedAI/EasyOCR(trainer 브랜치)를 로컬에 클론해서 쓰는
+# 벤더 코드라 이 저장소에는 포함하지 않는다 (tools/ocr_finetuning/README.md 참고)
+easyocr_trainer/
 *.pth
 *.pt
 
