@@ -6,12 +6,33 @@ Milvus Vector DB(Lite)와의 연동 인터페이스를 제공합니다.
 """
 
 import io
+from contextlib import contextmanager
 from typing import List, Dict, Any, Tuple, Optional
 from collections import defaultdict
+from unittest.mock import patch
 from PIL import Image, ImageDraw
 import numpy as np
 import torch
 from transformers import AutoProcessor, AutoModelForCausalLM, AutoModel
+from transformers.dynamic_module_utils import get_imports
+
+
+@contextmanager
+def _without_flash_attn_requirement():
+    """Florence-2 원격 코드는 attn_implementation과 무관하게 flash_attn이
+    설치돼 있지 않으면 import 단계에서부터 실패한다 (정적으로 소스의 import문을
+    스캔해 존재 여부만 확인하기 때문). flash_attn을 실제로 쓰지 않는 GPU(예: 1080 Ti)
+    에서도 로딩이 막히므로, 로딩 시점에만 감지된 import 목록에서 flash_attn을 제외한다.
+    """
+    def _get_imports_without_flash_attn(filename):
+        imports = get_imports(filename)
+        return [i for i in imports if i != "flash_attn"]
+
+    with patch(
+        "transformers.dynamic_module_utils.get_imports",
+        _get_imports_without_flash_attn,
+    ):
+        yield
 
 try:
     from pymilvus import Collection, connections, FieldSchema, CollectionSchema, DataType, utility
@@ -69,18 +90,19 @@ class DocumentDupPipeline:
             self.dino_model = self.dino_model.to(self.device_light).eval()
 
             # Stage 3: Region Object Detection using Florence-2 (GPU 1)
-            self.flo_processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base", trust_remote_code=True)
-            
             # [FIX 1] 1080 Ti는 Flash Attention 2를 지원하지 않으므로 조건부 실행
             attn_implementation = "flash_attention_2" if self.use_flash_attn else None
-            
-            self.flo_model = AutoModelForCausalLM.from_pretrained(
-                "microsoft/Florence-2-base", 
-                trust_remote_code=True,
-                attn_implementation=attn_implementation,
-                torch_dtype=self.dtype,
-                device_map=self.device_light
-            )
+
+            with _without_flash_attn_requirement():
+                self.flo_processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base", trust_remote_code=True)
+
+                self.flo_model = AutoModelForCausalLM.from_pretrained(
+                    "microsoft/Florence-2-base",
+                    trust_remote_code=True,
+                    attn_implementation=attn_implementation,
+                    torch_dtype=self.dtype,
+                    device_map=self.device_light
+                )
             self.flo_model.eval()
             
         except Exception as e:
