@@ -7,6 +7,13 @@ from src.config.base import BaseConfig
 import numpy as np
 from shapely.geometry import Polygon
 
+# Optional LaTeX parsing dependency (pylatexenc)
+try:
+    from pylatexenc.latexwalker import LatexWalker, LatexWalkerParseError, LatexMacroNode
+    HAS_PYLATEXENC = True
+except Exception:
+    HAS_PYLATEXENC = False
+
 class Severity(Enum):
     INFO = auto()
     WARNING = auto()
@@ -68,14 +75,99 @@ class Validator:
         elif len(poly) % 2 != 0:
              results.append(ValidationResult("invalid_poly", Severity.ERROR, "Polygon coordinates must be even number"))
 
+        # ignore 속성 종합 확인 (root 레벨 및 attribute 내부 모두 확인)
+        is_ignored = getattr(ann, 'ignore', False)
+        if hasattr(ann, 'attributes') and isinstance(ann.attributes, dict) and ann.attributes.get('ignore') is True:
+            is_ignored = True
+        elif ann.raw_data and isinstance(ann.raw_data.get('attribute'), dict) and ann.raw_data['attribute'].get('ignore') is True:
+            is_ignored = True
+
         # 3. 빈 텍스트(Empty Text) 유효성 검사
         text_required_cats = {"text_block", "title", "header", "footer", "list_item", "table_caption", "figure_caption", "page_footnote"}
         if category in text_required_cats:
             if ann.text is not None and str(ann.text).strip() == "":
-                # ignore=True인 경우 상대적으로 덜 중요하므로 WARNING, 아닌 경우는 ERROR
-                severity = Severity.WARNING if getattr(ann, 'ignore', False) else Severity.ERROR
-                results.append(ValidationResult("empty_text", severity, "텍스트(text) 값이 비어있습니다."))
+                severity = Severity.WARNING if is_ignored else Severity.ERROR
+                msg = "텍스트(text) 값이 비어있습니다."
+                if is_ignored:
+                    msg += " (단, attribute 내 ignore=True로 설정되어 오류가 아님)"
+                results.append(ValidationResult("empty_text", severity, msg))
 
+        # 4. 빈 HTML 유효성 검사
+        if category == "table":
+            html_val = None
+            if hasattr(ann, 'html') and ann.html is not None:
+                html_val = ann.html
+            elif ann.raw_data and 'html' in ann.raw_data:
+                html_val = ann.raw_data.get('html')
+                
+            if html_val is None or str(html_val).strip() == "":
+                severity = Severity.WARNING if is_ignored else Severity.ERROR
+                msg = "테이블 요소의 html 값이 비어있거나 Null(None)입니다."
+                if is_ignored:
+                    msg += " (단, attribute 내 ignore=True로 설정되어 오류가 아님)"
+                results.append(ValidationResult("empty_html", severity, msg))
+        elif ann.raw_data and 'html' in ann.raw_data:
+            # table이 아닌데 html을 가진 경우 (예: chart)에도 빈 값이면 경고
+            html_val = ann.raw_data.get('html')
+            if html_val is None or str(html_val).strip() == "":
+                severity = Severity.WARNING
+                msg = f"'{category}' 요소의 html 값이 비어있거나 Null(None)입니다."
+                if is_ignored:
+                    msg += " (단, attribute 내 ignore=True로 설정되어 정상 처리됨)"
+                results.append(ValidationResult("empty_html", severity, msg))
+
+        # 5. LaTeX 검증 (equation_isolated 카테고리 및 latex/text 내 인라인 수식)
+        if category == "equation_isolated" or getattr(ann, 'latex', None) or (getattr(ann, 'text', None) and ("$" in ann.text or "\\" in ann.text)):
+            # validate explicit latex field
+            latex_field = getattr(ann, 'latex', None)
+            if latex_field:
+                results.extend(self._validate_latex_syntax(latex_field, source='latex_field', ann=ann))
+            # validate inline formulas in text
+            text_field = getattr(ann, 'text', None)
+            if text_field:
+                inline_formulas = self._extract_inline_latex(text_field)
+                for idx, (formula, span) in enumerate(inline_formulas):
+                    results.extend(self._validate_latex_syntax(formula, source='inline_text', ann=ann, span=span))
+
+        # 6. [NEW] potential missing inlinelatex 검증
+        if category in {"text_block", "chart_caption", "table_caption"}:
+            text_field = getattr(ann, 'text', None)
+            if text_field:
+                results.extend(self._validate_missing_inlinelatex(text_field, ann=ann))
+
+        return results
+
+    def _validate_missing_inlinelatex(self, text: str, ann: Optional[Annotation] = None) -> List[ValidationResult]:
+        """텍스트 내에 수식이나 과학적 기호가 포함되어 있는데 inlinelatex($...$) 처리가 누락되었는지 검사합니다."""
+        results = []
+        
+        # 1. 이미 LaTeX로 감싸진 부분 제외하고 검색하기 위해 $...$ 제거한 임시 텍스트 생성
+        clean_text = re.sub(r'\$.*?\$', ' ', text)
+        
+        # 2. 수식/과학적 기호 패턴 정의
+        # - 하첨자/상첨자 패턴: x_2, y^2, H_2O 등
+        # - 주요 수식 기호: \alpha, \beta, \times, \pm, \sqrt 등
+        # - 연산자: \sum, \int, \log 등
+        patterns = [
+            (r'[a-zA-Z][0-9]_[a-zA-Z0-9]', "알파벳 뒤에 오는 숫자/문자 하첨자 가능성"),
+            (r'[a-zA-Z]\^[a-zA-Z0-9]', "지수(상첨자) 표현 가능성"),
+            (r'\\[a-zA-Z]+', "역슬래시(\\)로 시작하는 LaTeX 매크로 누락 가능성"),
+            (r'[0-9]+\s*[xX]\s*[0-9]+', "곱셈 기호(x) 사용 (latex \\times 권장)"),
+            (r'[a-zA-Z0-9]+/[a-zA-Z0-9]+', "분수 형태 표현 가능성"),
+        ]
+        
+        for pattern, reason in patterns:
+            match = re.search(pattern, clean_text)
+            if match:
+                results.append(ValidationResult(
+                    rule_id="missing_inlinelatex",
+                    severity=Severity.WARNING,
+                    message=f"텍스트 내에 수식/과학적 표현({match.group()})이 발견되었으나 inlinelatex($...$) 처리가 누락된 것으로 의심됩니다. ({reason})",
+                    details={"matched": match.group(), "reason": reason}
+                ))
+                # 하나라도 발견되면 중복 보고 방지를 위해 중단 (필요시 전체 탐색 가능)
+                break
+                
         return results
 
     def validate_document(self, doc: Document) -> List[ValidationResult]:
@@ -84,6 +176,29 @@ class Validator:
         주요 검증: figure 하위 요소(text_block, table, chart 등)의 종속 누락 여부 (IoA 90% 기준)
         """
         results = []
+        
+        # 0. 중복 anno_id 검사 (루트 레벨만 검사하여 sub_regions 오탐 방지)
+        all_ids = set()
+        duplicate_ids = set()
+        
+        if doc.raw_data and 'layout_dets' in doc.raw_data:
+            for item in doc.raw_data['layout_dets']:
+                if isinstance(item, dict) and 'anno_id' in item:
+                    aid = item['anno_id']
+                    if aid in all_ids:
+                        duplicate_ids.add(aid)
+                    else:
+                        all_ids.add(aid)
+            
+        for dup_id in duplicate_ids:
+            results.append(
+                ValidationResult(
+                    rule_id="duplicate_anno_id",
+                    severity=Severity.ERROR,
+                    message=f"문서 내에 중복된 anno_id({dup_id})가 존재합니다. (메인 목록과 sub_regions 등에서 ID 충돌)",
+                    details={"anno_id": dup_id}
+                )
+            )
         
         # 1. 자기 참조(Self-referencing) 관계 오류 검사
         if doc.raw_data and 'extra' in doc.raw_data and 'relation' in doc.raw_data['extra']:
@@ -128,8 +243,10 @@ class Validator:
                         
             if doc.raw_data and 'extra' in doc.raw_data and 'relation' in doc.raw_data['extra']:
                 for rel in doc.raw_data['extra']['relation']:
-                    if rel.get('parent') == figure.anno_id:
-                        linked_child_ids.add(rel.get('son'))
+                    rel_parent = rel.get('parent') if 'parent' in rel else rel.get('source_anno_id')
+                    rel_son = rel.get('son') if 'son' in rel else rel.get('target_anno_id')
+                    if rel_parent == figure.anno_id:
+                        linked_child_ids.add(rel_son)
 
             for child in child_candidates:
                 if child.anno_id in linked_child_ids:
@@ -367,3 +484,102 @@ class Validator:
         except Exception:
             # shapely 연산 중 에러 시 Fail Safe
             return 0.0
+
+    # ---------------- LaTeX 검증 보조 메서드 ----------------
+    def _extract_inline_latex(self, text: str) -> List[tuple]:
+        """텍스트 내의 inline/display LaTeX 수식을 추출합니다. 반환값: [(formula, (start, end)), ...]"""
+        results: List[tuple] = []
+        if not text:
+            return results
+        # display math $$...$$ (DOTALL to capture newlines)
+        for m in re.finditer(r'(?<!\\)\$\$(.+?)(?<!\\)\$\$', text, flags=re.DOTALL):
+            results.append((m.group(1), m.span(1)))
+        # inline math $...$
+        for m in re.finditer(r'(?<!\\)\$(.+?)(?<!\\)\$', text):
+            results.append((m.group(1), m.span(1)))
+        return results
+
+    def _validate_latex_syntax(self, latex_str: str, source: str = 'latex', ann: Optional[Annotation] = None, span: Optional[tuple] = None) -> List[ValidationResult]:
+        """간단한 LaTeX 문법 검사기를 제공합니다. pylatexenc가 설치되어 있으면 파싱을 시도하고,
+        중괄호/대괄호 매칭, 구분자, 빈 수식 등을 검사합니다.
+        """
+        results: List[ValidationResult] = []
+        if latex_str is None:
+            return results
+        s = str(latex_str)
+        s_strip = s.strip()
+        if s_strip == "":
+            results.append(ValidationResult("latex_empty_formula", Severity.ERROR, "빈 수식입니다.", details={"source": source, "ann_id": getattr(ann, 'anno_id', None), "span": span}))
+            return results
+
+        # Delimiters: check for mixed usage $ and $$ in the raw string
+        # If original string contains both $$ and single $ (not part of $$), flag mixed delimiter
+        if "$$" in s and "$" in s.replace("$$", ""):
+            results.append(ValidationResult("latex_mixed_delimiters", Severity.ERROR, "$$와 $가 혼합 사용되었습니다.", details={"source": source, "ann_id": getattr(ann, 'anno_id', None), "span": span}))
+
+        # Braces matching {}
+        stack = []
+        for idx, ch in enumerate(s):
+            if ch == '{':
+                stack.append(idx)
+            elif ch == '}':
+                if not stack:
+                    results.append(ValidationResult("latex_unmatched_braces", Severity.ERROR, "닫는 중괄호 '}'가 짝이 맞지 않습니다.", details={"pos": idx, "source": source, "ann_id": getattr(ann, 'anno_id', None), "span": span}))
+                else:
+                    stack.pop()
+        if stack:
+            results.append(ValidationResult("latex_unmatched_braces", Severity.ERROR, "여는 중괄호 '{'가 닫히지 않았습니다.", details={"pos": stack[-1], "source": source, "ann_id": getattr(ann, 'anno_id', None), "span": span}))
+
+        # Square brackets matching []
+        stack_b = []
+        for idx, ch in enumerate(s):
+            if ch == '[':
+                stack_b.append(idx)
+            elif ch == ']':
+                if not stack_b:
+                    results.append(ValidationResult("latex_unmatched_brackets", Severity.ERROR, "닫는 대괄호 ']'가 짝이 맞지 않습니다.", details={"pos": idx, "source": source, "ann_id": getattr(ann, 'anno_id', None), "span": span}))
+                else:
+                    stack_b.pop()
+        if stack_b:
+            results.append(ValidationResult("latex_unmatched_brackets", Severity.ERROR, "여는 대괄호 '['가 닫히지 않았습니다.", details={"pos": stack_b[-1], "source": source, "ann_id": getattr(ann, 'anno_id', None), "span": span}))
+
+        # Use pylatexenc to attempt a parse if available
+        if HAS_PYLATEXENC:
+            try:
+                walker = LatexWalker(s)
+                nodelist, pos, len_ = walker.get_latex_nodes(pos=0)
+
+                # collect unknown macros (best-effort): treat any macro not in COMMON set as a warning
+                COMMON_MACROS = {
+                    'frac','sqrt','sum','int','lim','sin','cos','tan','log','ln','exp',
+                    'alpha','beta','gamma','delta','epsilon','theta','phi','psi','omega',
+                    'mathrm','mathbf','mathit','text','left','right','begin','end','label','ref',
+                    'frac','cdot','times','leq','geq','le','ge','neq','pm','mp'
+                }
+                unknown = set()
+                def _walk(nodes):
+                    for node in nodes:
+                        try:
+                            from pylatexenc.latexwalker import LatexMacroNode
+                            if isinstance(node, LatexMacroNode):
+                                name = getattr(node, 'macroname', None)
+                                if name and name not in COMMON_MACROS:
+                                    unknown.add(name)
+                        except Exception:
+                            pass
+                        # traverse children
+                        child_nodes = getattr(node, 'nodelist', None)
+                        if child_nodes:
+                            _walk(child_nodes)
+                _walk(nodelist)
+                if unknown:
+                    results.append(ValidationResult("latex_invalid_command", Severity.WARNING, f"알 수 없는 LaTeX 매크로 발견: {', '.join(sorted(unknown))}", details={"unknown_macros": list(sorted(unknown)), "source": source, "ann_id": getattr(ann, 'anno_id', None), "span": span}))
+
+            except Exception as e:
+                # Parsing error -> treat as syntax error
+                results.append(ValidationResult("latex_invalid_command", Severity.ERROR, f"LaTeX 파싱 실패: {e}", details={"source": source, "ann_id": getattr(ann, 'anno_id', None), "span": span}))
+        else:
+            # No parser available: signal as warning
+            results.append(ValidationResult("latex_no_parser", Severity.WARNING, "pylatexenc가 설치되어 있지 않아 상세 파싱을 수행하지 못했습니다.", details={"source": source, "ann_id": getattr(ann, 'anno_id', None)}))
+
+        return results

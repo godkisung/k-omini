@@ -127,6 +127,9 @@ def perform_bulk_validation() -> pd.DataFrame:
             # File Load Error
             report_data.append({
                 "파일": file_name,
+                "카테고리": "파일 로드 오류 (File)",
+                "어노테이션 ID": "N/A",
+                "순서": "N/A",
                 "심각도": "ERROR",
                 "규칙": "file_load_error",
                 "메시지": str(e)

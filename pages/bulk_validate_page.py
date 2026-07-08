@@ -108,7 +108,7 @@ def _render_advanced_filters(report_df: pd.DataFrame) -> pd.DataFrame:
         )
     
     with col2:
-        categories = sorted(report_df["카테고리"].unique().tolist())
+        categories = sorted(report_df["카테고리"].dropna().astype(str).unique().tolist())
         category_filter = st.multiselect(
             "카테고리 필터",
             options=categories,
@@ -117,7 +117,7 @@ def _render_advanced_filters(report_df: pd.DataFrame) -> pd.DataFrame:
         )
     
     with col3:
-        rules = sorted(report_df["규칙"].unique().tolist())
+        rules = sorted(report_df["규칙"].dropna().astype(str).unique().tolist())
         rule_filter = st.multiselect(
             "규칙 필터",
             options=rules,
@@ -126,7 +126,7 @@ def _render_advanced_filters(report_df: pd.DataFrame) -> pd.DataFrame:
         )
     
     with col4:
-        files = sorted(report_df["파일"].unique().tolist())
+        files = sorted(report_df["파일"].dropna().astype(str).unique().tolist())
         file_filter = st.multiselect(
             "파일 필터",
             options=files,

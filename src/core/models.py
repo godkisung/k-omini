@@ -38,15 +38,31 @@ class Annotation:
         if "attributes" in data and isinstance(data["attributes"], dict):
             attributes.update(data["attributes"])
         
+        text_val = data.get("text")
+        if text_val is not None:
+            text_val = str(text_val)
+            
+        latex_val = data.get("latex")
+        if latex_val is not None:
+            latex_val = str(latex_val)
+            
+        html_val = data.get("html")
+        if html_val is not None:
+            html_val = str(html_val)
+            
+        caption_val = data.get("caption")
+        if caption_val is not None:
+            caption_val = str(caption_val)
+
         return cls(
             anno_id=data.get("anno_id", -1),
             category_type=data.get("category_type", "unknown"),
             poly=data.get("poly", []),
             order=data.get("order"),
-            text=data.get("text"),
-            latex=data.get("latex"),
-            html=data.get("html"),
-            caption=data.get("caption"),
+            text=text_val,
+            latex=latex_val,
+            html=html_val,
+            caption=caption_val,
             ignore=data.get("ignore", False),
             attributes=attributes,
             raw_data=data

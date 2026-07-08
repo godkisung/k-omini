@@ -5,7 +5,7 @@ import streamlit as st
 import os
 import pandas as pd
 import re
-from PIL import Image
+from PIL import Image, ImageOps
 from streamlit_image_coordinates import streamlit_image_coordinates
 
 try:
@@ -36,6 +36,7 @@ _SAMPLING_ERROR_TYPES = [
     "바운딩 박스 오류",
     "텍스트 누락/오기",
     "관계(relation) 오류",
+    "inlinelatex 누락/오기",
     "ignore 플래그 오류",
     "순서(order) 오류",
     "기타",
@@ -179,6 +180,18 @@ def _render_document_validation(doc):
             st.markdown("---")
 
 
+def _get_dynamic_image_dir(doc):
+    """문서의 실제 경로를 기반으로 이미지 디렉토리를 동적으로 결정합니다."""
+    if doc.filepath:
+        # doc.filepath: .../batch/json/file.json
+        # img_dir: .../batch/img/
+        json_dir = os.path.dirname(doc.filepath)
+        batch_dir = os.path.dirname(json_dir)
+        img_dir = os.path.join(batch_dir, "img")
+        if os.path.exists(img_dir):
+            return img_dir
+    return IMAGE_DIR
+
 def _show_cropped_error(doc, parent_id, child_id):
     # parent, child 객체 찾기
     parent_ann = next((a for a in doc.layout_dets if a.anno_id == parent_id), None)
@@ -187,10 +200,28 @@ def _show_cropped_error(doc, parent_id, child_id):
     if not parent_ann or not child_ann:
         return
         
-    full_image_path = os.path.join(IMAGE_DIR, doc.image_path)
+    dynamic_img_dir = _get_dynamic_image_dir(doc)
+    full_image_path = os.path.join(dynamic_img_dir, doc.image_path)
+    # [Fallback] Robust path matching
+    if not os.path.exists(full_image_path):
+        json_basename = os.path.splitext(doc.filename)[0]
+        # 1. Try matching with the JSON filename base
+        for ext in ['.jpg', '.jpeg', '.png', '.JPG', '.PNG']:
+            fallback_path = os.path.join(dynamic_img_dir, json_basename + ext)
+            if os.path.exists(fallback_path):
+                full_image_path = fallback_path
+                break
+        
+        # 2. Try matching by ID_PAGE prefix
+        if not os.path.exists(full_image_path):
+            prefix = "_".join(json_basename.split("_")[:2])
+            img_files = [f for f in os.listdir(dynamic_img_dir) if f.startswith(prefix) and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            if img_files:
+                full_image_path = os.path.join(dynamic_img_dir, img_files[0])
+
     if os.path.exists(full_image_path):
         from src.core.visualizer import draw_annotations_on_image
-        image = Image.open(full_image_path).convert("RGB")
+        image = ImageOps.exif_transpose(Image.open(full_image_path).convert("RGB"))
         
         # 부모 객체 영역(bbox) 구하기 (margin 추가)
         p_poly = parent_ann.poly
@@ -220,13 +251,31 @@ def _show_single_ann_crop(doc, anno_id, margin: int = 60):
         st.warning(f"anno_id={anno_id} 에 해당하는 어노테이션을 찾을 수 없습니다.")
         return
 
-    full_image_path = os.path.join(IMAGE_DIR, doc.image_path)
+    dynamic_img_dir = _get_dynamic_image_dir(doc)
+    full_image_path = os.path.join(dynamic_img_dir, doc.image_path)
+    # [Fallback] Robust path matching
     if not os.path.exists(full_image_path):
-        st.error("이미지 파일을 찾을 수 없습니다.")
+        json_basename = os.path.splitext(doc.filename)[0]
+        # 1. Try matching with the JSON filename base
+        for ext in ['.jpg', '.jpeg', '.png', '.JPG', '.PNG']:
+            fallback_path = os.path.join(dynamic_img_dir, json_basename + ext)
+            if os.path.exists(fallback_path):
+                full_image_path = fallback_path
+                break
+        
+        # 2. Try matching by ID_PAGE prefix
+        if not os.path.exists(full_image_path):
+            prefix = "_".join(json_basename.split("_")[:2])
+            img_files = [f for f in os.listdir(dynamic_img_dir) if f.startswith(prefix) and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            if img_files:
+                full_image_path = os.path.join(dynamic_img_dir, img_files[0])
+
+    if not os.path.exists(full_image_path):
+        st.error(f"이미지 파일을 찾을 수 없습니다: {full_image_path}")
         return
 
     from src.core.visualizer import draw_annotations_on_image
-    image = Image.open(full_image_path).convert("RGB")
+    image = ImageOps.exif_transpose(Image.open(full_image_path).convert("RGB"))
 
     poly = ann.poly
     min_x = max(0, min(poly[0::2]) - margin)
@@ -353,6 +402,9 @@ def _render_inspection_panel(doc, filtered_anns, filtered_indices, current_filte
     # Config option for OCR?
     _render_ocr_validation_section(selected_ann, doc)
     
+    # [NEW] inlinelatex 검수 섹션
+    _render_inlinelatex_inspection_section(selected_ann, doc)
+    
     st.markdown("### ⚙️ 속성")
     if selected_ann.attributes: st.json(selected_ann.attributes)
     
@@ -380,10 +432,26 @@ def _render_content_tab(selected_ann, doc):
         if "$" in selected_ann.text or "\\" in selected_ann.text:
             with st.expander("👁️ LaTeX 렌더링 미리보기", expanded=False):
                 st.info("텍스트 내의 LaTeX 수식을 렌더링합니다.")
-                
+
+                # LaTeX 검증 배지
+                try:
+                    _ann_val = validator.validate_annotation(selected_ann)
+                    _latex_res = [r for r in _ann_val if getattr(r, 'rule_id', '').startswith('latex_')]
+                    if _latex_res:
+                        if any(getattr(r, 'severity', None) == Severity.ERROR for r in _latex_res):
+                            st.markdown("**🔴 LaTeX 검증: ERROR**")
+                        elif any(getattr(r, 'severity', None) == Severity.WARNING for r in _latex_res):
+                            st.markdown("**🟡 LaTeX 검증: WARNING**")
+                        else:
+                            st.markdown("**🟢 LaTeX 검증: OK**")
+                    else:
+                        st.markdown("**🟢 LaTeX 검증: 없음**")
+                except Exception:
+                    st.markdown("**⚠️ LaTeX 검증 불가**")
+
                 # 1. Markdown Rendering (Supports $...$)
                 st.markdown(selected_ann.text)
-                
+
                 # 2. Force Block Latex (For raw latex without $)
                 if "$" not in selected_ann.text and "\\" in selected_ann.text:
                     st.caption("🔽 강제 수식 렌더링 (Block Mode)")
@@ -398,6 +466,23 @@ def _render_content_tab(selected_ann, doc):
         with st.expander(f"📐 LaTeX 수식 ({formula_type})", expanded=True):
             raw_latex = selected_ann.latex.strip()
             clean_latex = raw_latex.replace("$$", "").strip()
+
+            # LaTeX 검증 배지 (별도 검증 결과 표시)
+            try:
+                _ann_val = validator.validate_annotation(selected_ann)
+                _latex_res = [r for r in _ann_val if getattr(r, 'rule_id', '').startswith('latex_')]
+                if _latex_res:
+                    if any(getattr(r, 'severity', None) == Severity.ERROR for r in _latex_res):
+                        st.markdown("**🔴 LaTeX 검증: ERROR**")
+                    elif any(getattr(r, 'severity', None) == Severity.WARNING for r in _latex_res):
+                        st.markdown("**🟡 LaTeX 검증: WARNING**")
+                    else:
+                        st.markdown("**🟢 LaTeX 검증: OK**")
+                else:
+                    st.markdown("**🟢 LaTeX 검증: 없음**")
+            except Exception:
+                st.markdown("**⚠️ LaTeX 검증 불가**")
+
             try:
                 st.latex(clean_latex)
             except Exception as e:
@@ -460,6 +545,19 @@ def _render_main_visual_ui(doc, filtered_anns, filtered_indices, current_filtere
 
     st.subheader(f"📍 {current_filtered_idx + 1} / {len(filtered_anns)}")
     
+    col_jump1, col_jump2 = st.columns([3, 1])
+    with col_jump1:
+        jump_id = st.text_input("🔍 ID로 객체 이동", key="jump_id_input", label_visibility="collapsed", placeholder="이동할 객체의 anno_id 입력")
+    with col_jump2:
+        if st.button("ID 이동", key="btn_jump_id", use_container_width=True):
+            if jump_id:
+                found_idx = next((i for i, ann in enumerate(doc.layout_dets) if str(ann.anno_id) == jump_id.strip()), None)
+                if found_idx is not None:
+                    st.session_state.selected_index = found_idx
+                    st.rerun()
+                else:
+                    st.warning(f"ID '{jump_id}'를 찾을 수 없습니다.")
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
         if (ss.shortcut_button("⏮️ 처음", shortcut="Home", key="btn_a_f") if SHORTCUTS_AVAILABLE else st.button("⏮️ 처음")):
@@ -480,9 +578,27 @@ def _render_main_visual_ui(doc, filtered_anns, filtered_indices, current_filtere
             st.session_state.selected_index = filtered_indices[-1]
             st.rerun()
 
-    full_image_path = os.path.join(IMAGE_DIR, doc.image_path)
+    dynamic_img_dir = _get_dynamic_image_dir(doc)
+    full_image_path = os.path.join(dynamic_img_dir, doc.image_path)
+    # [Fallback] Robust path matching
+    if not os.path.exists(full_image_path):
+        # 1. Try matching with the JSON filename base (for renamed/short files)
+        json_basename = os.path.splitext(doc.filename)[0]
+        for ext in ['.jpg', '.jpeg', '.png', '.JPG', '.PNG']:
+            fallback_path = os.path.join(dynamic_img_dir, json_basename + ext)
+            if os.path.exists(fallback_path):
+                full_image_path = fallback_path
+                break
+        
+        # 2. Try matching by ID_PAGE prefix (for long names with mismatches like spaces)
+        if not os.path.exists(full_image_path):
+            prefix = "_".join(json_basename.split("_")[:2]) # e.g., EX01492_00014
+            img_files = [f for f in os.listdir(dynamic_img_dir) if f.startswith(prefix) and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            if img_files:
+                full_image_path = os.path.join(dynamic_img_dir, img_files[0])
+
     if os.path.exists(full_image_path):
-        image = Image.open(full_image_path).convert("RGB")
+        image = ImageOps.exif_transpose(Image.open(full_image_path).convert("RGB"))
         
         # [Visualizer Update] Relations
         relations = doc.raw_data.get("extra", {}).get("relation", [])
@@ -547,7 +663,122 @@ def _render_validation_tab(selected_ann, doc):
             val_results.append(res)
             
     if not val_results: st.success("이슈 없음")
+
+    # LaTeX 전용 섹션
+    latex_results = [r for r in val_results if getattr(r, 'rule_id', '').startswith('latex_') or r.rule_id == 'missing_inlinelatex']
+    if latex_results:
+        with st.expander("🔬 LaTeX 및 inlinelatex 검증", expanded=True):
+            for i, r in enumerate(latex_results):
+                sev = getattr(r, 'severity', None)
+                if sev == Severity.ERROR:
+                    st.error(r.message)
+                elif sev == Severity.WARNING:
+                    st.warning(r.message)
+                else:
+                    st.info(r.message)
+                # 위치 정보가 있으면 snippet 표시
+                details = r.details or {}
+                span = details.get('span')
+                if span:
+                    # span is (start, end) relative to source string
+                    # show context from latex field or text
+                    source_text = selected_ann.latex or selected_ann.text or ''
+                    try:
+                        sstart, send = span
+                        context = source_text[max(0, sstart-40):min(len(source_text), send+40)]
+                        # highlight exact part with brackets for clarity
+                        highlighted = context.replace(source_text[sstart:send], f"<<{source_text[sstart:send]}>>") if source_text and sstart < len(source_text) else context
+                        st.code(highlighted)
+                    except Exception:
+                        pass
+            
+            # ── 육안 검증 UI 추가 ─────────────────────────────
+            st.markdown("---")
+            st.markdown("### 👁️ 육안 검증 (수동 확인)")
+            
+            # 세션 상태 초기화
+            latex_review_key = f"latex_review_{selected_ann.anno_id}"
+            if latex_review_key not in st.session_state:
+                st.session_state[latex_review_key] = {
+                    'verified': False,
+                    'issues': [],
+                    'notes': '',
+                    'reviewer': '',
+                    'timestamp': None
+                }
+            
+            review_data = st.session_state[latex_review_key]
+            
+            # 검증 상태 표시
+            if review_data['verified']:
+                st.success("✅ 육안 검증 완료")
+                if review_data.get('timestamp'):
+                    st.caption(f"검증 시각: {review_data['timestamp']}")
+            else:
+                st.warning("⏳ 육안 검증 필요")
+            
+            # 검증 체크박스
+            verified = st.checkbox(
+                "LaTeX 수식 렌더링이 올바른지 확인했습니다",
+                value=review_data['verified'],
+                key=f"latex_verified_{selected_ann.anno_id}",
+                help="수식을 눈으로 확인하고 렌더링이 맞는지 검증하세요"
+            )
+            
+            # 검증 이슈 선택 (다중 선택)
+            latex_issue_types = [
+                "수식 렌더링 오류 (깨진 기호)",
+                "구분자 불일치 ($ 짝이 맞지 않음)",
+                "중괄호/괄호 불일치",
+                "LaTeX 명령어 오타",
+                "수식 의미 불명확",
+                "레이아웃/위치 이상",
+                "기타"
+            ]
+            
+            issues = st.multiselect(
+                "발견된 이슈 (복수 선택 가능)",
+                options=latex_issue_types,
+                default=review_data.get('issues', []),
+                key=f"latex_issues_{selected_ann.anno_id}",
+                disabled=not verified
+            )
+            
+            # 검증자 메모
+            notes = st.text_area(
+                "검증자 메모",
+                value=review_data.get('notes', ''),
+                height=80,
+                placeholder="특이사항, 수정 제안, 재확인 필요 항목 등",
+                key=f"latex_notes_{selected_ann.anno_id}",
+                disabled=not verified
+            )
+            
+            # 검증자 이름
+            reviewer = st.text_input(
+                "검증자",
+                value=review_data.get('reviewer', ''),
+                key=f"latex_reviewer_{selected_ann.anno_id}",
+                disabled=not verified,
+                placeholder="이름 입력"
+            )
+            
+            # 저장 버튼
+            if st.button("💾 검증 결과 저장", key=f"save_latex_review_{selected_ann.anno_id}", use_container_width=True):
+                from datetime import datetime
+                st.session_state[latex_review_key] = {
+                    'verified': verified,
+                    'issues': issues,
+                    'notes': notes,
+                    'reviewer': reviewer,
+                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                st.success("✅ LaTeX 검증 결과가 저장되었습니다.")
+                st.rerun()
+    # 일반 검증 리스트
     for res in val_results:
+        if getattr(res, 'rule_id', '').startswith('latex_'):
+            continue
         if getattr(res, "severity", None) == Severity.ERROR: st.error(res.message)
         elif getattr(res, "severity", None) == Severity.WARNING: st.warning(res.message)
         else: st.info(res.message if hasattr(res, "message") else str(res))
@@ -669,6 +900,82 @@ def _run_ad_hoc_ocr(selected_ann, doc):
         else: st.success(f"Pass (Sim: {sim:.2f})")
         
         st.text_area("Extracted", value=ocr_text)
+
+
+def _render_inlinelatex_inspection_section(selected_ann, doc):
+    """
+    inlinelatex 태깅이 의심되는 항목에 대해 원본 크롭과 렌더링을 병렬 배치하여 검수를 돕습니다.
+    """
+    text = selected_ann.text
+    if not text:
+        return
+
+    # 1. 텍스트 내의 수식 및 의심되는 부분 탐색
+    val_results = validator.validate_annotation(selected_ann)
+    missing_warnings = [r for r in val_results if r.rule_id == "missing_inlinelatex"]
+    
+    # LaTeX 기호가 있거나, missing_inlinelatex 경고가 있는 경우에만 표시
+    if not missing_warnings and "$" not in text and "\\" not in text:
+        return
+        
+    st.markdown("---")
+    st.markdown("### 📐 inlinelatex 상세 검수 (Side-by-Side)")
+    
+    # 2. 크롭 이미지와 렌더링 결과 나란히 표시
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.caption("🖼️ 원본 이미지 영역")
+        dynamic_img_dir = _get_dynamic_image_dir(doc)
+        full_image_path = os.path.join(dynamic_img_dir, doc.image_path)
+        # [Fallback] Robust path matching
+        if not os.path.exists(full_image_path):
+            json_basename = os.path.splitext(doc.filename)[0]
+            for ext in ['.jpg', '.jpeg', '.png', '.JPG', '.PNG']:
+                fallback_path = os.path.join(dynamic_img_dir, json_basename + ext)
+                if os.path.exists(fallback_path):
+                    full_image_path = fallback_path
+                    break
+            if not os.path.exists(full_image_path):
+                prefix = "_".join(json_basename.split("_")[:2])
+                img_files = [f for f in os.listdir(dynamic_img_dir) if f.startswith(prefix) and f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                if img_files:
+                    full_image_path = os.path.join(dynamic_img_dir, img_files[0])
+
+        if os.path.exists(full_image_path):
+            try:
+                img = ImageOps.exif_transpose(Image.open(full_image_path))
+                # poly to bbox
+                if selected_ann.poly and len(selected_ann.poly) >= 6:
+                    xs = selected_ann.poly[0::2]
+                    ys = selected_ann.poly[1::2]
+                    # 패딩 추가
+                    pad = 10
+                    bbox = (max(0, min(xs)-pad), max(0, min(ys)-pad), min(img.width, max(xs)+pad), min(img.height, max(ys)+pad))
+                    crop = img.crop(bbox)
+                    st.image(crop, use_column_width=True)
+                else:
+                    st.info("유효한 좌표가 없습니다.")
+            except Exception as e:
+                st.error(f"이미지 크롭 실패: {e}")
+        else:
+            st.warning("이미지 파일을 찾을 수 없습니다.")
+            
+    with col2:
+        st.caption("✨ 현재 렌더링 결과 (Markdown)")
+        # 수평선을 그어 영역 구분
+        st.markdown(f'<div style="border: 1px solid #ddd; padding: 10px; border-radius: 5px; background-color: #f9f9f9;">{text}</div>', unsafe_allow_html=True)
+        st.markdown(text) # Streamlit 기본 렌더링 (LaTeX 지원)
+        
+    if missing_warnings:
+        st.info("🔍 **검증 AI 코멘트:**")
+        for w in missing_warnings:
+            st.warning(f"⚠️ {w.message}")
+            if w.details and "matched" in w.details:
+                st.markdown(f"> 의심 구문: `{w.details['matched']}`")
+    else:
+        st.success("✅ 기본적인 inlinelatex 형식($, \\)이 감지되었거나, 자동 검증에서 특이사항이 발견되지 않았습니다.")
+
 
 
 # ─── 샘플링 검수 모드 헬퍼 ──────────────────────────────────────────────────────

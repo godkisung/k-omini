@@ -3,7 +3,7 @@ import easyocr
 import logging
 from typing import Optional, Any
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 import streamlit as st
 import tempfile
 import torch
@@ -49,7 +49,7 @@ def _crop_image_as_np(image_source: Any, bbox: list) -> Optional[np.ndarray]:
     try:
         if isinstance(image_source, str):
             if not os.path.exists(image_source): return None
-            image = Image.open(image_source)
+            image = ImageOps.exif_transpose(Image.open(image_source))
         elif isinstance(image_source, Image.Image):
             image = image_source
         elif isinstance(image_source, np.ndarray):

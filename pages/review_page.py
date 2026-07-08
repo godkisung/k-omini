@@ -15,7 +15,7 @@
 import os
 
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageOps
 
 from src.config import get_batch_dirs
 from src.core.models import Document
@@ -217,7 +217,7 @@ def _render_main_review(cache: SamplingCache, fname: str, idx: int) -> None:
             try:
                 doc = Document.from_json(json_path)
                 if os.path.exists(img_path):
-                    image = Image.open(img_path).convert("RGB")
+                    image = ImageOps.exif_transpose(Image.open(img_path).convert("RGB"))
                     relations = doc.raw_data.get("extra", {}).get("relation", [])
                     annotated = draw_annotations_on_image(
                         image.copy(), doc.layout_dets, config, relations=relations
