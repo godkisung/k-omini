@@ -100,8 +100,8 @@ Streamlit 기반 검수 UI와, 임베딩 모델을 조합한 3-Stage 중복 탐�
    uv sync
    ```
 
-2. **Vector DB (Milvus) 실행**
-   * 중복 탐지 기능을 사용하기 위해서는 Milvus 서버가 필요합니다. (`localhost:19530` 기본값)
+2. **Vector DB**
+   * `milvus-lite` 임베디드 모드를 사용하므로 별도 서버 설치/구동이 필요 없습니다. 첫 실행 시 프로젝트 루트에 `milvus_local.db` 파일이 자동 생성됩니다.
 
 3. **애플리케이션 실행**
    ```bash
@@ -120,7 +120,7 @@ Streamlit 기반 검수 UI와, 임베딩 모델을 조합한 3-Stage 중복 탐�
 
 * **UI**: Streamlit
 * **Vision/Embedding Models**: Jina-CLIP-v2, DINOv2, Florence-2
-* **OCR**: EasyOCR, PaddleOCR
+* **OCR**: EasyOCR
 * **Vector DB**: Milvus (milvus-lite)
 * **Data**: Pandas, Shapely, OpenCV
 * **Package/Env 관리**: uv

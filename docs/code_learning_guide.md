@@ -65,7 +65,7 @@ graph TB
 
 #### 📋 핵심 코드 분석
 
-**[base.py](file:///home/kisung/workspace/07.k_omnidoc_bench/src/config/base.py)**
+**[base.py](../src/config/base.py)**
 
 ```python
 class BaseConfig(ABC):
@@ -98,7 +98,7 @@ graph LR
     style C fill:#e8f5e9
 ```
 
-**[k_omnidoc.py](file:///home/kisung/workspace/07.k_omnidoc_bench/src/config/k_omnidoc.py)**
+**[k_omnidoc.py](../src/config/k_omnidoc.py)**
 
 ```python
 class KOmniDocConfig(BaseConfig):

@@ -56,7 +56,7 @@ cp "${SCRIPT_DIR}/run_finetune.py" "${TRAINER_DIR}/run_finetune.py"
 
 echo "🚀 Fine-tuning 시작..."
 cd "${TRAINER_DIR}"
-CUDA_VISIBLE_DEVICES=0,1 python run_finetune.py 2>&1 | tee "${PROJECT_ROOT}/models/finetuned_train.log"
+KOMNI_PROJECT_ROOT="${PROJECT_ROOT}" CUDA_VISIBLE_DEVICES=0,1 python run_finetune.py 2>&1 | tee "${PROJECT_ROOT}/models/finetuned_train.log"
 
 echo ""
 echo "✅ Fine-tuning 완료!"

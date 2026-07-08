@@ -1,4 +1,4 @@
-
+import argparse
 import json
 import os
 import shutil
@@ -101,8 +101,12 @@ def analyze_table_layouts(json_dir, image_dir, output_base_dir):
     print(f"\nImages copied to {output_base_dir}/horizontal and {output_base_dir}/vertical")
 
 if __name__ == "__main__":
-    json_dir = "/home/kisung/workspace/07.k_omnidoc_bench/data/sample/split_annotations/"
-    image_dir = "/home/kisung/workspace/07.k_omnidoc_bench/data/sample/OmniDocBench_images/"
-    output_base_dir = "/home/kisung/workspace/07.k_omnidoc_bench/data/sample/table_images/"
-    
-    analyze_table_layouts(json_dir, image_dir, output_base_dir)
+    parser = argparse.ArgumentParser(
+        description="table_layout(horizontal/vertical) 속성별로 표가 포함된 문서 통계를 내고 예시 이미지를 분류합니다."
+    )
+    parser.add_argument("--json_dir", default="data/sample/split_annotations/", help="JSON 어노테이션 디렉토리")
+    parser.add_argument("--image_dir", default="data/sample/OmniDocBench_images/", help="원본 이미지 디렉토리")
+    parser.add_argument("--output_dir", default="data/sample/table_images/", help="분류된 예시 이미지를 저장할 디렉토리")
+    args = parser.parse_args()
+
+    analyze_table_layouts(args.json_dir, args.image_dir, args.output_dir)

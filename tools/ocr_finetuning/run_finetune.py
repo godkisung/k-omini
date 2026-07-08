@@ -29,7 +29,10 @@ import torch
 import easyocr
 import types
 
-DATA_ROOT = os.path.expanduser("~/workspace/07.k_omnidoc_bench/data/ocr_training/lmdb")
+# train.sh가 실행 시 PROJECT_ROOT를 환경변수로 넘겨준다. 직접 실행할 경우
+# (trainer/ 디렉토리에서) 프로젝트 루트를 지정해서 넘겨줘야 한다.
+PROJECT_ROOT = os.environ.get("KOMNI_PROJECT_ROOT") or os.path.expanduser("~/workspace/07.k_omnidoc_bench")
+DATA_ROOT = os.path.join(PROJECT_ROOT, "data", "ocr_training", "lmdb")
 PRETRAINED_MODEL = os.path.expanduser("~/.EasyOCR/model/korean_g2.pth")
 EXPERIMENT_NAME = "ko_finetuned_v1"
 
