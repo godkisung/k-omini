@@ -40,14 +40,12 @@ env/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# pytest
+# pytest / mypy
 .pytest_cache/
 .coverage
 htmlcov/
 *.cover
 .hypothesis/
-
-# mypy
 .mypy_cache/
 .dmypy.json
 dmypy.json
@@ -55,47 +53,29 @@ dmypy.json
 # Streamlit
 .streamlit/
 
-# 프로젝트 특정
+# 클라이언트 데이터 / 납품 산출물 (코드 저장소에 포함하지 않음)
 sample/
 data/
 misc/
 reports/
 visualizations/
-validation_report.csv
-validation_report.xlsx
 *.pdf
-scripts/    
-!scripts/test_deduplication.py
-sample/
+*.xlsx
+*.csv
+vendor_fix_request*.md
 
-# OCR 캐시
+# 캐시 / 로컬 산출물
 .ocr_cache/
+.sampling_cache/
+.understand-anything/
+.antigravitycli/
+dis/
 /tmp/
 
-# 로그
+# 로그 / 환경 변수
 *.log
-
-# 환경 변수
 .env
 .env.local
-
-# GitLab CI/CD
-.gitlab-ci.yml
-
-# 제외하지 않을 파일들 (검수 프로그램 관련)
-!pages/
-!tests/
-!streamlit_app.py
-!validate_data.py
-!cli.py
-!app_helpers.py
-!requirements.txt
-!README.md
-!pytest.ini
-!GEMINI.md
-
-# Sampling / Review Cache
-.sampling_cache/
 
 # EasyOCR Fine-tuning
 easyocr_trainer/trainer/saved_models/

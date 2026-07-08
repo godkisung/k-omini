@@ -24,6 +24,7 @@ dependencies = [
     "paddlex>=3.4.2",
     "pandas>=2.3.3",
     "pillow>=12.1.1",
+    "pylatexenc>=2.10",
     "pymilvus>=2.6.10",
     "python-levenshtein>=0.27.3",
     "rich>=14.3.3",
