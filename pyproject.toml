@@ -35,12 +35,21 @@ dependencies = [
     "streamlit-image-coordinates>=0.4.0",
     "streamlit-shortcuts>=1.2.1",
     "timm>=1.0.26",
-    "torch>=2.11.0",
-    "torchaudio>=2.11.0",
-    "torchvision>=0.26.0",
+    "torch==2.5.1",
+    "torchaudio==2.5.1",
+    "torchvision==0.20.1",
     "transformers<4.45.0",
     "typer>=0.24.1",
 ]
+
+# torch==2.5.1(cu121)로 고정하는 이유: 최신 torch(cu13 계열)는 컴파일된 CUDA 커널에서
+# Pascal(SM 6.1, 예: GTX 1080 Ti)을 아예 제외해 GPU에서 "no kernel image" 에러로
+# 실패한다. cu121 인덱스의 마지막 버전인 2.5.1까지는 sm_60이 arch list에 포함되어
+# Pascal GPU에서 정상 동작한다 (src/core/ocr_engine.py의 legacy GPU cuDNN 우회 참고).
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchvision = { index = "pytorch" }
+torchaudio = { index = "pytorch" }
 
 [[tool.uv.index]]
 name = "pytorch"

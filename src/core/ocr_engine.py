@@ -11,15 +11,32 @@ import Levenshtein
 
 logger = logging.getLogger(__name__)
 
+def _is_legacy_gpu() -> bool:
+    """Volta(SM 7.0) 미만 구형 GPU(Pascal 등, 예: GTX 1080 Ti = SM 6.1) 여부.
+
+    최신 cuDNN(9.11+)은 SM 7.5 미만 장치를 아예 지원하지 않고, 그보다 낮은
+    버전(예: 9.1~9.2)도 이 프로젝트에서 쓰는 conv 구성 일부에서 graph 엔진을
+    찾지 못해 "no engine"/"no kernel image" 형태로 실패하는 것을 확인했다.
+    cuDNN을 끄면 torch의 기본 CUDA 커널로 폴백되어 GPU에서 정상 동작한다.
+    """
+    if not torch.cuda.is_available():
+        return False
+    major, _ = torch.cuda.get_device_capability(0)
+    return major < 7
+
+
 @st.cache_resource
 def get_ocr_engine() -> Optional[easyocr.Reader]:
     """EasyOCR (Fast Lane) - 단순 텍스트용
 
-    일부 구형 GPU(예: Pascal 아키텍처 GTX 1080 Ti, SM 6.1)는 최신 torch가 요구하는
-    cuDNN 버전의 RNN(LSTM) 커널을 지원하지 않아 GPU 모드 초기화 자체가
-    RuntimeError로 실패한다. 이 경우 조용히 OCR이 죽지 않도록 CPU로 폴백한다.
+    구형 GPU에서 GPU 초기화 자체가 RuntimeError로 실패하는 경우를 대비해
+    CPU로도 폴백한다 (조용히 OCR이 죽지 않도록).
     """
     use_gpu = torch.cuda.is_available()
+    if use_gpu and _is_legacy_gpu():
+        torch.backends.cudnn.enabled = False
+        logger.info("레거시 GPU(Pascal 이하) 감지: cuDNN 비활성화 후 GPU 모드로 실행")
+
     if use_gpu:
         try:
             return easyocr.Reader(['ko', 'en'], gpu=True, verbose=False)
